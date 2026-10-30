@@ -102,15 +102,21 @@ The application is split into two isolated, communicating worlds:
 - Parameters changed in the UI (e.g., Gain slider moved from 5.0 to 7.0) are communicated to DSP nodes using atomic floating-point values (`AtomicF32` or smoothed parameter transitions) to eliminate zipper noise without locking the audio thread.
 - VU meter readouts and recording audio streams are pushed to a lock-free Single-Producer Single-Consumer (SPSC) ring buffer (`rtrb` or `crossbeam-channel`).
 
-### 3.3 DSP Effect Trait Architecture
-Every effect in AMPku implements the unified `AudioEffect` trait:
+### 3.3 DSP Effect Trait & Stereo Architecture
+Sinyal input fisik (kabel jack) bersifat mono (`f32`). Untuk mendukung toggle `Mono / Stereo` dan modul spasial (Chorus, Delay, Reverb stereo spread), trait `AudioEffect` mendukung pemrosesan stereo:
+
 ```rust
+pub struct AudioFrame {
+    pub left: f32,
+    pub right: f32,
+}
+
 pub trait AudioEffect: Send {
     fn name(&self) -> &'static str;
-    fn process_sample(&mut self, input: f32) -> f32;
-    fn process_block(&mut self, buffer: &mut [f32]) {
-        for sample in buffer.iter_mut() {
-            *sample = self.process_sample(*sample);
+    fn process_frame(&mut self, input: AudioFrame) -> AudioFrame;
+    fn process_block(&mut self, buffer: &mut [AudioFrame]) {
+        for frame in buffer.iter_mut() {
+            *frame = self.process_frame(*frame);
         }
     }
     fn set_parameter(&mut self, id: u32, value: f32);
@@ -120,6 +126,19 @@ pub trait AudioEffect: Send {
     fn reset(&mut self);
 }
 ```
+Jika toggle `Mono` aktif, channel Left dan Right disatukan (`(L + R) * 0.5`). Jika toggle `Stereo` aktif, efek time-based (Reverb/Delay/Chorus) merender pantulan stereo lebar.
+
+### 3.4 Hardware I/O & Clock Drift Handling
+- Pengguna bebas memilih kombinasi Input dan Output dari perangkat fisik berbeda (contoh: Input USB Vention, Output Realtek Motherboard).
+- Untuk mencegah audio pop / xrun akibat selisih clock kristal independen antar-hardware pada buffer 64/128 sample, engine audio menyertakan adaptive drift ring buffer dengan dynamic sample interpolation.
+- Jika pengguna memilih Input dan Output pada hardware yang sama (contoh: Input Vention & Output Vention), engine otomatis mengaktifkan mode *Zero-Drift Direct Sync* untuk latensi fisik terendah mutlak.
+
+### 3.5 Factory Embedded Cabinet IR
+- Rilis v1.0 menyertakan profil IR speaker kabinet esensial yang langsung di-embed ke dalam binary executable via `include_bytes!` (bebas dependensi file eksternal):
+  1. `Celestion V30 4x12` (Rock / Metal punchy mid)
+  2. `Fender Twin Reverb 1x12` (Vintage clean sparkling)
+  3. `Marshall 1960A 4x12` (Classic British Crunch)
+  4. `Acoustic Simulator Cab` (Piezo resonance)
 
 ---
 

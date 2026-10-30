@@ -87,13 +87,13 @@ Audio thread berjalan pada prioritas realtime OS. Di dalam audio callback:
 
 ## 🎛️ Cara Mengubah & Menambah Efek Baru (Custom DSP)
 
-Semua efek di AMPku menerapkan trait tunggal `AudioEffect` yang berada di `src/dsp/traits.rs`. Kamu bisa menambahkan efek ciptaanmu sendiri dengan mudah:
+Semua efek di AMPku menerapkan trait tunggal `AudioEffect` yang berada di `src/dsp/traits.rs`. Trait ini mendukung pemrosesan frame stereo (`AudioFrame { left, right }`), sehingga efek spasial seperti Reverb dan Delay dapat menghasilkan persebaran stereo yang lebar:
 
 ### Contoh: Membuat Efek Distortion Baru
 Buat file baru di `src/dsp/saturation/my_distortion.rs`:
 
 ```rust
-use crate::dsp::traits::AudioEffect;
+use crate::dsp::traits::{AudioEffect, AudioFrame};
 
 pub struct HardClipDistortion {
     pub gain: f32,       // 1.0 sampai 20.0
@@ -106,16 +106,15 @@ impl AudioEffect for HardClipDistortion {
         "My Custom Distortion"
     }
 
-    fn process_sample(&mut self, input: f32) -> f32 {
+    fn process_frame(&mut self, input: AudioFrame) -> AudioFrame {
         if self.bypass {
             return input;
         }
 
-        // 1. Dorong sinyal dengan gain
-        let driven = input * self.gain;
-
-        // 2. Potong keras (hard clipping)
-        driven.clamp(-self.threshold, self.threshold)
+        AudioFrame {
+            left: (input.left * self.gain).clamp(-self.threshold, self.threshold),
+            right: (input.right * self.gain).clamp(-self.threshold, self.threshold),
+        }
     }
 
     fn set_parameter(&mut self, id: u32, value: f32) {

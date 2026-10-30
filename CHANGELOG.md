@@ -13,6 +13,9 @@ Format penomoran versi mengikuti [Semantic Versioning](https://semver.org/spec/v
   - Penetapan target arsitektur: Dual-thread zero-lock audio engine (Rust `cpal` WASAPI Exclusive + `egui` native GUI).
 - **Core Features Designed**:
   - **Dual Input Processing**: Input Channel 1 (Gitar) & Channel 2 (Mic) independen.
+  - **Flexible Dual-Device I/O**: Dukungan pemilihan input dan output perangkat fisik berbeda (Vention + Motherboard Realtek) dengan adaptive clock drift compensation buffer.
+  - **Stereo Processing Architecture**: Trait `AudioEffect` dengan struktur `AudioFrame { left, right }` dan toggle `Mono / Stereo` untuk modul spasial (Delay/Reverb stereo spread).
+  - **Embedded Factory Cabinet IR**: 4 profil IR esensial langsung di-embed ke dalam binary (Celestion V30, Fender Twin, Marshall 1960A, Acoustic Cab).
   - **Modular DSP Chain**: Serial node graph dengan trait `AudioEffect` yang dapat ditambah, dihapus, dan di-bypass secara dinamis.
   - **Comprehensive Effect Suite**:
     - Dynamics: Noise Gate, Sustainer Compressor.
