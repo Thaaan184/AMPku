@@ -21,7 +21,7 @@ Main gitar listrik colok soundcard USB di Windows seringkali menyebalkan:
 
 ## 🚀 Cara Menjalankan AMPku (1-Click Run & Auto-Install)
 
-Untuk memastikan kompatibilitas penuh dengan kartu grafis dan driver audio Windows tanpa terkena blokir SmartScreen, AMPku menyediakan script launcher otomatis (mirip `npm start` di ekosistem Node.js, tetapi menggunakan Rust yang super cepat).
+AMPku menyediakan script launcher otomatis untuk memasang dependensi, meng-compile, dan menjalankan aplikasi secara lokal di Windows.
 
 ### Cara Menjalankan di Windows:
 
