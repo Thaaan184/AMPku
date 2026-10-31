@@ -18,7 +18,10 @@ GuitarFX menangkap sinyal gitar dari soundcard USB, memproses efek digital buata
        ▼
 [ GuitarFX (Rust Engine) ]
    ├── Input Gain (Volume)
-   ├── Overdrive (Drive, Tone, Soft-Clipping)
+   ├── Auto-Wah (Dynamic Envelope State-Variable Filter)
+   ├── Clean Preamp (Sparkle Bright & Low-Mid Warmth)
+   ├── Crunch Amp (British Tube Edge-of-Breakup Saturation)
+   ├── Overdrive (Drive, Tone, Smooth Tanh Clipping)
    ├── Distortion (Asymmetric Diode Clipping, 720Hz Pre-emphasis)
    ├── Delay (Stereo Ping-Pong, Feedback, Mix)
    └── Brickwall Limiter (Clamping -0.3 dBFS)
@@ -85,31 +88,37 @@ Saat aplikasi dibuka, GuitarFX otomatis mencari device berikut:
  OUTPUT [########------]  -8.5 dB
 
 =========================================
- EFFECTS
+ EFFECTS CHAIN
 =========================================
-  [ON]  [1] Overdrive    Drive: 40% | Tone: 60%
-  [OFF] [2] Distortion   Drive: 50% | Tone: 50%
-  [ON]  [3] Delay        Time: 320 ms | FB: 35% | Mix: 25%
+  [OFF] [1] Clean Preamp  Bright: 50% | Warmth: 40%
+  [OFF] [2] Crunch Amp    Drive: 45% | Tone: 55%
+  [ON]  [3] Overdrive     Drive: 40% | Tone: 60%
+  [OFF] [4] Distortion    Drive: 50% | Tone: 50%
+  [OFF] [5] Auto-Wah      Depth: 70% | Resonance: 65%
+  [ON]  [6] Delay         Time: 320 ms | FB: 35% | Mix: 25%
 
- Active Parameter: [Overdrive Drive] (Use [Tab] to cycle, [+/-] to adjust)
+ Active Parameter: [Overdrive: Drive] (Use [Tab] to cycle, [+/-] to adjust)
 
 =========================================
  CONTROLS
 =========================================
- [D] Select Device
- [1] Toggle Overdrive    [2] Toggle Distortion    [3] Toggle Delay
+ [D] Select Audio Devices (2-Step Wizard)
+ [1] Clean   [2] Crunch   [3] Overdrive   [4] Distortion   [5] Wah   [6] Delay
  [+] / [-] Adjust Parameter    [Tab] Cycle Active Parameter
  [B] Bypass All          [M] Mute Output          [Q] Quit
 =========================================
 ```
 
 ### Tombol Kontrol:
-- **`D`**: Buka daftar audio device untuk memilih input & output.
-- **`1`**: Toggle efek Overdrive `[ON]` / `[OFF]`.
-- **`2`**: Toggle efek Distortion `[ON]` / `[OFF]`.
-- **`3`**: Toggle efek Delay `[ON]` / `[OFF]`.
+- **`D`**: Buka wizard 2-langkah pemilihan input & output device.
+- **`1`**: Toggle **Clean Preamp** `[ON]` / `[OFF]` (bright sparkle + warm body).
+- **`2`**: Toggle **Crunch Amp** `[ON]` / `[OFF]` (edge-of-breakup tube amp).
+- **`3`**: Toggle **Overdrive** `[ON]` / `[OFF]` (smooth blues/rock saturation).
+- **`4`**: Toggle **Distortion** `[ON]` / `[OFF]` (diode clipping + 720 Hz pre-emphasis).
+- **`5`**: Toggle **Auto-Wah** `[ON]` / `[OFF]` (envelope-driven SVF bandpass sweep).
+- **`6`**: Toggle **Delay** `[ON]` / `[OFF]` (stereo ping-pong delay).
 - **`+` / `-`**: Naikkan / turunkan nilai parameter aktif (+/- 5%).
-- **`Tab`**: Ganti parameter yang sedang dipilih (Drive, Tone, Time, Feedback, Mix).
+- **`Tab`**: Ganti parameter aktif (Bright, Warmth, Drive, Tone, Depth, Res, Time, FB, Mix).
 - **`B`**: Global Bypass (matikan semua efek, suara clean mentah).
 - **`M`**: Mute audio output seketika.
 - **`Q`**: Keluar dari aplikasi dengan bersih.

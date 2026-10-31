@@ -1,6 +1,7 @@
 use guitarfx::devices::{find_device_by_name, DeviceInfo};
 use guitarfx::effects::{
-    load_f32, store_f32, DelayDsp, DistortionDsp, EffectEngine, EffectParams, OverdriveDsp,
+    load_f32, store_f32, CleanDsp, CrunchDsp, DelayDsp, DistortionDsp, EffectEngine, EffectParams,
+    OverdriveDsp, WahDsp,
 };
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -96,6 +97,39 @@ fn test_effect_engine_processing_and_mute() {
         output.iter().all(|&s| s == 0.0),
         "Mute failed to silence output"
     );
+}
+
+#[test]
+fn test_clean_crunch_wah_math() {
+    let mut clean = CleanDsp::new();
+    let (mut c_l, mut c_r) = (0.4f32, 0.4f32);
+    clean.process(&mut c_l, &mut c_r, 0.7, 0.5);
+    assert!(
+        !c_l.is_nan() && c_l.abs() <= 1.5,
+        "Clean output out of bounds"
+    );
+    assert!(
+        !c_r.is_nan() && c_r.abs() <= 1.5,
+        "Clean output out of bounds"
+    );
+
+    let mut crunch = CrunchDsp::new();
+    let (mut cr_l, mut cr_r) = (0.7f32, 0.7f32);
+    crunch.process(&mut cr_l, &mut cr_r, 0.6, 0.5);
+    assert!(
+        !cr_l.is_nan() && cr_l.abs() <= 1.5,
+        "Crunch output out of bounds"
+    );
+    assert!(
+        !cr_r.is_nan() && cr_r.abs() <= 1.5,
+        "Crunch output out of bounds"
+    );
+
+    let mut wah = WahDsp::new(48000.0);
+    let (mut w_l, mut w_r) = (0.6f32, 0.6f32);
+    wah.process(&mut w_l, &mut w_r, 0.8, 0.7);
+    assert!(!w_l.is_nan() && w_l.abs() > 0.0, "Wah output invalid");
+    assert!(!w_r.is_nan() && w_r.abs() > 0.0, "Wah output invalid");
 }
 
 #[test]

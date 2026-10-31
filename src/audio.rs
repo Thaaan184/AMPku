@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Context, Result};
 use cpal::traits::{DeviceTrait, StreamTrait};
 use cpal::{BufferSize, Device, SampleFormat, SampleRate, Stream, StreamConfig};
-use ringbuf::traits::{Consumer, Producer, Split};
+use ringbuf::traits::{Consumer, Observer, Producer, Split};
 use ringbuf::HeapRb;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -80,8 +80,8 @@ impl AudioEngine {
             buffer_size: BufferSize::Fixed(self.buffer_size),
         };
 
-        // 3. Pre-allocated lock-free SPSC Ring Buffer (capacity = 48000 frames = 1.0 second)
-        let rb = HeapRb::<f32>::new(48000);
+        // 3. Pre-allocated ultra-low-latency SPSC Ring Buffer (capacity = 1024 frames = ~21 ms)
+        let rb = HeapRb::<f32>::new(1024);
         let (mut producer, mut consumer) = rb.split();
 
         // 4. Build Input Stream Callback
@@ -118,7 +118,16 @@ impl AudioEngine {
                     mono_scratch.resize(frames, 0.0);
                 }
 
-                // Pull mono samples from ring buffer
+                // Low-Latency Auto-Drain: Drop stale samples if backlog exceeds current frame needs
+                let avail = consumer.occupied_len();
+                if avail > frames + 64 {
+                    let drain_count = avail - frames;
+                    for _ in 0..drain_count {
+                        let _ = consumer.try_pop();
+                    }
+                }
+
+                // Pull freshest mono samples from ring buffer
                 for sample in mono_scratch.iter_mut().take(frames) {
                     *sample = consumer.try_pop().unwrap_or(0.0);
                 }

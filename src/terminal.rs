@@ -19,10 +19,16 @@ use crate::devices::{
 use crate::effects::{load_f32, store_f32, EffectParams};
 
 pub enum SelectedParam {
+    CleanBright,
+    CleanWarmth,
+    CrunchDrive,
+    CrunchTone,
     OverdriveDrive,
     OverdriveTone,
     DistortionDrive,
     DistortionTone,
+    WahDepth,
+    WahResonance,
     DelayTime,
     DelayFeedback,
     DelayMix,
@@ -31,25 +37,37 @@ pub enum SelectedParam {
 impl SelectedParam {
     pub fn next(&self) -> Self {
         match self {
+            Self::CleanBright => Self::CleanWarmth,
+            Self::CleanWarmth => Self::CrunchDrive,
+            Self::CrunchDrive => Self::CrunchTone,
+            Self::CrunchTone => Self::OverdriveDrive,
             Self::OverdriveDrive => Self::OverdriveTone,
             Self::OverdriveTone => Self::DistortionDrive,
             Self::DistortionDrive => Self::DistortionTone,
-            Self::DistortionTone => Self::DelayTime,
+            Self::DistortionTone => Self::WahDepth,
+            Self::WahDepth => Self::WahResonance,
+            Self::WahResonance => Self::DelayTime,
             Self::DelayTime => Self::DelayFeedback,
             Self::DelayFeedback => Self::DelayMix,
-            Self::DelayMix => Self::OverdriveDrive,
+            Self::DelayMix => Self::CleanBright,
         }
     }
 
     pub fn name(&self) -> &'static str {
         match self {
-            Self::OverdriveDrive => "Overdrive Drive",
-            Self::OverdriveTone => "Overdrive Tone",
-            Self::DistortionDrive => "Distortion Drive",
-            Self::DistortionTone => "Distortion Tone",
-            Self::DelayTime => "Delay Time",
-            Self::DelayFeedback => "Delay Feedback",
-            Self::DelayMix => "Delay Mix",
+            Self::CleanBright => "Clean Preamp: Bright",
+            Self::CleanWarmth => "Clean Preamp: Warmth",
+            Self::CrunchDrive => "Crunch Amp: Drive",
+            Self::CrunchTone => "Crunch Amp: Tone",
+            Self::OverdriveDrive => "Overdrive: Drive",
+            Self::OverdriveTone => "Overdrive: Tone",
+            Self::DistortionDrive => "Distortion: Drive",
+            Self::DistortionTone => "Distortion: Tone",
+            Self::WahDepth => "Auto-Wah: Depth",
+            Self::WahResonance => "Auto-Wah: Resonance",
+            Self::DelayTime => "Delay: Time",
+            Self::DelayFeedback => "Delay: Feedback",
+            Self::DelayMix => "Delay: Mix",
         }
     }
 }
@@ -142,17 +160,29 @@ impl TerminalApp {
                                     self.device_stage = DeviceSelectStage::SelectInput;
                                 }
                                 KeyCode::Char('1') => {
+                                    let cur = self.params.clean_enabled.load(Ordering::Relaxed);
+                                    self.params.clean_enabled.store(!cur, Ordering::Relaxed);
+                                }
+                                KeyCode::Char('2') => {
+                                    let cur = self.params.crunch_enabled.load(Ordering::Relaxed);
+                                    self.params.crunch_enabled.store(!cur, Ordering::Relaxed);
+                                }
+                                KeyCode::Char('3') => {
                                     let cur = self.params.overdrive_enabled.load(Ordering::Relaxed);
                                     self.params.overdrive_enabled.store(!cur, Ordering::Relaxed);
                                 }
-                                KeyCode::Char('2') => {
+                                KeyCode::Char('4') => {
                                     let cur =
                                         self.params.distortion_enabled.load(Ordering::Relaxed);
                                     self.params
                                         .distortion_enabled
                                         .store(!cur, Ordering::Relaxed);
                                 }
-                                KeyCode::Char('3') => {
+                                KeyCode::Char('5') => {
+                                    let cur = self.params.wah_enabled.load(Ordering::Relaxed);
+                                    self.params.wah_enabled.store(!cur, Ordering::Relaxed);
+                                }
+                                KeyCode::Char('6') => {
                                     let cur = self.params.delay_enabled.load(Ordering::Relaxed);
                                     self.params.delay_enabled.store(!cur, Ordering::Relaxed);
                                 }
@@ -284,6 +314,31 @@ impl TerminalApp {
 
     fn adjust_param(&self, dir: f32) {
         match self.selected_param {
+            SelectedParam::CleanBright => {
+                let cur = load_f32(&self.params.clean_bright);
+                store_f32(
+                    &self.params.clean_bright,
+                    (cur + dir * 0.05).clamp(0.0, 1.0),
+                );
+            }
+            SelectedParam::CleanWarmth => {
+                let cur = load_f32(&self.params.clean_warmth);
+                store_f32(
+                    &self.params.clean_warmth,
+                    (cur + dir * 0.05).clamp(0.0, 1.0),
+                );
+            }
+            SelectedParam::CrunchDrive => {
+                let cur = load_f32(&self.params.crunch_drive);
+                store_f32(
+                    &self.params.crunch_drive,
+                    (cur + dir * 0.05).clamp(0.0, 1.0),
+                );
+            }
+            SelectedParam::CrunchTone => {
+                let cur = load_f32(&self.params.crunch_tone);
+                store_f32(&self.params.crunch_tone, (cur + dir * 0.05).clamp(0.0, 1.0));
+            }
             SelectedParam::OverdriveDrive => {
                 let cur = load_f32(&self.params.overdrive_drive);
                 store_f32(
@@ -309,6 +364,17 @@ impl TerminalApp {
                 let cur = load_f32(&self.params.distortion_tone);
                 store_f32(
                     &self.params.distortion_tone,
+                    (cur + dir * 0.05).clamp(0.0, 1.0),
+                );
+            }
+            SelectedParam::WahDepth => {
+                let cur = load_f32(&self.params.wah_depth);
+                store_f32(&self.params.wah_depth, (cur + dir * 0.05).clamp(0.0, 1.0));
+            }
+            SelectedParam::WahResonance => {
+                let cur = load_f32(&self.params.wah_resonance);
+                store_f32(
+                    &self.params.wah_resonance,
                     (cur + dir * 0.05).clamp(0.0, 1.0),
                 );
             }
@@ -360,9 +426,9 @@ impl TerminalApp {
         execute!(
             out,
             SetForegroundColor(Color::Cyan),
-            Print("=========================================\n"),
-            Print("             GUITARFX RUST               \n"),
-            Print("=========================================\n\n"),
+            Print("=========================================================\n"),
+            Print("                     GUITARFX RUST                       \n"),
+            Print("=========================================================\n\n"),
             ResetColor,
             Print(" STATUS : "),
             SetForegroundColor(status_color),
@@ -371,11 +437,14 @@ impl TerminalApp {
             Print(format!(" INPUT  : {}\n", audio.input_device_name)),
             Print(format!(" OUTPUT : {}\n\n", audio.output_device_name)),
             Print(format!(" SAMPLE RATE : {} Hz\n", audio.sample_rate)),
-            Print(format!(" BUFFER SIZE : {} frames\n\n", audio.buffer_size)),
+            Print(format!(
+                " BUFFER SIZE : {} frames (Ultra-Low Latency ~5.3 ms)\n\n",
+                audio.buffer_size
+            )),
             SetForegroundColor(Color::Cyan),
-            Print("=========================================\n"),
+            Print("=========================================================\n"),
             Print(" AUDIO METERS\n"),
-            Print("=========================================\n"),
+            Print("=========================================================\n"),
             ResetColor
         )?;
 
@@ -401,13 +470,21 @@ impl TerminalApp {
             Print(format!(" INPUT  [{}] {:>5.1} dB\n", in_bar, in_db)),
             Print(format!(" OUTPUT [{}] {:>5.1} dB\n\n", out_bar, out_db)),
             SetForegroundColor(Color::Cyan),
-            Print("=========================================\n"),
-            Print(" EFFECTS\n"),
-            Print("=========================================\n"),
+            Print("=========================================================\n"),
+            Print(" EFFECTS CHAIN\n"),
+            Print("=========================================================\n"),
             ResetColor
         )?;
 
         // Effects Table
+        let clean_on = self.params.clean_enabled.load(Ordering::Relaxed);
+        let clean_b = (load_f32(&self.params.clean_bright) * 100.0) as u32;
+        let clean_w = (load_f32(&self.params.clean_warmth) * 100.0) as u32;
+
+        let crunch_on = self.params.crunch_enabled.load(Ordering::Relaxed);
+        let crunch_d = (load_f32(&self.params.crunch_drive) * 100.0) as u32;
+        let crunch_t = (load_f32(&self.params.crunch_tone) * 100.0) as u32;
+
         let od_on = self.params.overdrive_enabled.load(Ordering::Relaxed);
         let od_drive = (load_f32(&self.params.overdrive_drive) * 100.0) as u32;
         let od_tone = (load_f32(&self.params.overdrive_tone) * 100.0) as u32;
@@ -416,6 +493,10 @@ impl TerminalApp {
         let dist_drive = (load_f32(&self.params.distortion_drive) * 100.0) as u32;
         let dist_tone = (load_f32(&self.params.distortion_tone) * 100.0) as u32;
 
+        let wah_on = self.params.wah_enabled.load(Ordering::Relaxed);
+        let wah_dp = (load_f32(&self.params.wah_depth) * 100.0) as u32;
+        let wah_res = (load_f32(&self.params.wah_resonance) * 100.0) as u32;
+
         let del_on = self.params.delay_enabled.load(Ordering::Relaxed);
         let del_time = load_f32(&self.params.delay_time_ms) as u32;
         let del_fb = (load_f32(&self.params.delay_feedback) * 100.0) as u32;
@@ -423,19 +504,37 @@ impl TerminalApp {
 
         print_effect_row(
             out,
-            "[1] Overdrive",
+            "[1] Clean Preamp",
+            clean_on,
+            &format!("Bright: {}% | Warmth: {}%", clean_b, clean_w),
+        )?;
+        print_effect_row(
+            out,
+            "[2] Crunch Amp",
+            crunch_on,
+            &format!("Drive: {}% | Tone: {}%", crunch_d, crunch_t),
+        )?;
+        print_effect_row(
+            out,
+            "[3] Overdrive",
             od_on,
             &format!("Drive: {}% | Tone: {}%", od_drive, od_tone),
         )?;
         print_effect_row(
             out,
-            "[2] Distortion",
+            "[4] Distortion",
             dist_on,
             &format!("Drive: {}% | Tone: {}%", dist_drive, dist_tone),
         )?;
         print_effect_row(
             out,
-            "[3] Delay",
+            "[5] Auto-Wah",
+            wah_on,
+            &format!("Depth: {}% | Resonance: {}%", wah_dp, wah_res),
+        )?;
+        print_effect_row(
+            out,
+            "[6] Delay",
             del_on,
             &format!(
                 "Time: {} ms | FB: {}% | Mix: {}%",
@@ -463,16 +562,18 @@ impl TerminalApp {
             )),
             ResetColor,
             SetForegroundColor(Color::Cyan),
-            Print("=========================================\n"),
+            Print("=========================================================\n"),
             Print(" CONTROLS\n"),
-            Print("=========================================\n"),
+            Print("=========================================================\n"),
             ResetColor,
-            Print(" [D] Select Audio Devices (2-Step Wizard)\n"),
-            Print(" [1] Toggle Overdrive    [2] Toggle Distortion    [3] Toggle Delay\n"),
+            Print(" [D] Select Devices (2-Step Wizard)\n"),
+            Print(
+                " [1] Clean   [2] Crunch   [3] Overdrive   [4] Distortion   [5] Wah   [6] Delay\n"
+            ),
             Print(" [+] / [-] Adjust Parameter    [Tab] Cycle Active Parameter\n"),
             Print(" [B] Bypass All          [M] Mute Output          [Q] Quit\n"),
             SetForegroundColor(Color::Cyan),
-            Print("=========================================\n"),
+            Print("=========================================================\n"),
             ResetColor
         )?;
 
@@ -630,7 +731,7 @@ fn print_effect_row(
         SetForegroundColor(color),
         Print(format!(" {} ", badge)),
         ResetColor,
-        Print(format!("{:<16} {}\n", name, params))
+        Print(format!("{:<18} {}\n", name, params))
     )?;
     Ok(())
 }
