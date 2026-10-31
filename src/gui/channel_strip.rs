@@ -9,7 +9,7 @@
 //! - Modular dynamic effect rack with reorder and delete actions
 //! - `[+ Add Effect]` menu listing all 10 available DSP modules
 
-use egui::{pos2, vec2, Color32, Rect, RichText, Sense, Slider, Stroke, Ui};
+use egui::{vec2, Color32, RichText, Slider, Ui};
 
 use crate::dsp::cab_sim::{CabinetProfile, CabinetSim};
 use crate::dsp::dynamics::{Compressor, NoiseGate};
@@ -18,13 +18,11 @@ use crate::dsp::saturation::{Distortion, Fuzz, Overdrive};
 use crate::dsp::time::{StereoDelay, StereoReverb};
 use crate::dsp::traits::AudioEffect;
 use crate::dsp::vocal::VocalDeEsser;
-use crate::engine::channel::{linear_to_db, ChannelMeter, ChannelStrip};
+use crate::engine::channel::{ChannelMeter, ChannelStrip};
 use crate::gui::effect_card::{render_effect_card_indexed, EffectCardAction};
 use crate::gui::theme::{
-    channel_strip_frame, meter_container_frame, well_frame, COLOR_ACCENT_BLUE,
-    COLOR_ALERT_RED, COLOR_METER_BG, COLOR_METER_GREEN, COLOR_METER_RED,
-    COLOR_METER_YELLOW, COLOR_SOLO_AMBER, COLOR_TEXT_DIM, COLOR_TEXT_MUTED,
-    COLOR_TEXT_PRIMARY,
+    channel_strip_frame, well_frame, COLOR_ACCENT_BLUE, COLOR_ALERT_RED, COLOR_SOLO_AMBER,
+    COLOR_TEXT_DIM, COLOR_TEXT_MUTED, COLOR_TEXT_PRIMARY,
 };
 
 /// Available DSP modules for the `[+ Add Effect]` menu.
@@ -299,117 +297,7 @@ fn render_fader_section(ui: &mut Ui, channel: &mut ChannelStrip) {
 
 /// Render stereo peak and RMS level VU meter with clipping indicator.
 fn render_vu_meter(ui: &mut Ui, meter: &ChannelMeter) {
-    let (peak_l, peak_r) = meter.peak();
-    let (rms_l, rms_r) = meter.rms();
-    let clipped = meter.is_clipped();
-
-    meter_container_frame().show(ui, |ui| {
-        let desired_size = vec2(36.0, 150.0);
-        let (rect, response) = ui.allocate_exact_size(desired_size, Sense::click());
-
-        // Click on meter to clear clip indicator
-        if response.clicked() {
-            meter.reset_clip();
-        }
-
-        if ui.is_rect_visible(rect) {
-            let painter = ui.painter();
-
-            // Background
-            painter.rect_filled(rect, 2.0, COLOR_METER_BG);
-
-            // Clip Indicator Box at top (height 10.0)
-            let clip_rect = Rect::from_min_size(rect.min, vec2(rect.width(), 10.0));
-            let clip_color = if clipped {
-                COLOR_METER_RED
-            } else {
-                Color32::from_rgb(0x2a, 0x10, 0x10)
-            };
-            painter.rect_filled(clip_rect, 1.0, clip_color);
-            painter.text(
-                clip_rect.center(),
-                egui::Align2::CENTER_CENTER,
-                "CLIP",
-                egui::FontId::new(7.5, egui::FontFamily::Monospace),
-                if clipped {
-                    Color32::WHITE
-                } else {
-                    Color32::from_rgb(0x55, 0x22, 0x22)
-                },
-            );
-
-            // Meter bars area below clip box
-            let bar_area_top = rect.min.y + 12.0;
-            let bar_area_height = rect.max.y - bar_area_top - 2.0;
-            let bar_width = 13.0;
-
-            let db_to_norm = |linear: f32| -> f32 {
-                let db = linear_to_db(linear);
-                ((db + 60.0) / 60.0).clamp(0.0, 1.0)
-            };
-
-            // Left Channel Bar (x: rect.min.x + 3)
-            let left_x = rect.min.x + 3.0;
-            draw_meter_bar(
-                painter,
-                left_x,
-                bar_area_top,
-                bar_width,
-                bar_area_height,
-                db_to_norm(peak_l),
-                db_to_norm(rms_l),
-            );
-
-            // Right Channel Bar (x: rect.min.x + 19)
-            let right_x = rect.min.x + 19.0;
-            draw_meter_bar(
-                painter,
-                right_x,
-                bar_area_top,
-                bar_width,
-                bar_area_height,
-                db_to_norm(peak_r),
-                db_to_norm(rms_r),
-            );
-        }
-    });
-}
-
-/// Draw an individual vertical channel bar with RMS body and peak line.
-fn draw_meter_bar(
-    painter: &egui::Painter,
-    x: f32,
-    top_y: f32,
-    width: f32,
-    height: f32,
-    peak_norm: f32,
-    rms_norm: f32,
-) {
-    let bar_rect = Rect::from_min_size(pos2(x, top_y), vec2(width, height));
-    painter.rect_filled(bar_rect, 1.0, Color32::from_rgb(0x18, 0x18, 0x1c));
-
-    // RMS Level Fill
-    let fill_height = height * rms_norm;
-    let fill_top = top_y + (height - fill_height);
-    let fill_rect = Rect::from_min_size(pos2(x, fill_top), vec2(width, fill_height));
-
-    let fill_color = if rms_norm > 0.95 {
-        COLOR_METER_RED
-    } else if rms_norm > 0.80 {
-        COLOR_METER_YELLOW
-    } else {
-        COLOR_METER_GREEN
-    };
-    painter.rect_filled(fill_rect, 1.0, fill_color);
-
-    // Peak Hold Line
-    if peak_norm > 0.01 {
-        let peak_y = top_y + (height - height * peak_norm).clamp(0.0, height - 1.0);
-        painter.line_segment(
-            [pos2(x, peak_y), pos2(x + width, peak_y)],
-            Stroke::new(1.5_f32, Color32::WHITE),
-        );
-    }
+    crate::gui::meter::render_stereo_vu_meter(ui, meter, vec2(36.0, 150.0));
 }
 
 /// Render the effect rack section title and `[+ Add Effect]` dropdown menu.
