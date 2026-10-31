@@ -56,3 +56,17 @@ pub fn find_device_by_name(devices: &[DeviceInfo], pattern: &str) -> Option<Devi
         .find(|d| d.name.to_lowercase().contains(&pat))
         .cloned()
 }
+
+/// Resolve CPAL Device for a given input device name.
+pub fn get_input_device_by_name(host: &Host, name: &str) -> Option<cpal::Device> {
+    host.input_devices()
+        .ok()
+        .and_then(|mut devs| devs.find(|d| d.name().map(|n| n == name).unwrap_or(false)))
+}
+
+/// Resolve CPAL Device for a given output device name.
+pub fn get_output_device_by_name(host: &Host, name: &str) -> Option<cpal::Device> {
+    host.output_devices()
+        .ok()
+        .and_then(|mut devs| devs.find(|d| d.name().map(|n| n == name).unwrap_or(false)))
+}

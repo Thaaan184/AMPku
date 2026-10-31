@@ -12,7 +12,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::audio::AudioEngine;
-use crate::devices::{get_capture_devices, get_playback_devices, DeviceInfo};
+use crate::devices::{
+    get_capture_devices, get_input_device_by_name, get_output_device_by_name, get_playback_devices,
+    DeviceInfo,
+};
 use crate::effects::{load_f32, store_f32, EffectParams};
 
 pub enum SelectedParam {
@@ -51,10 +54,21 @@ impl SelectedParam {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeviceSelectStage {
+    None,
+    SelectInput,
+    SelectOutput,
+}
+
 pub struct TerminalApp {
     pub params: Arc<EffectParams>,
     pub selected_param: SelectedParam,
-    pub selecting_device: bool,
+    pub device_stage: DeviceSelectStage,
+    pub selected_input_cursor: usize,
+    pub selected_output_cursor: usize,
+    pub chosen_input_device: Option<DeviceInfo>,
+    pub status_message: Option<String>,
     pub host: cpal::Host,
     pub capture_devices: Vec<DeviceInfo>,
     pub playback_devices: Vec<DeviceInfo>,
@@ -69,7 +83,11 @@ impl TerminalApp {
         Self {
             params,
             selected_param: SelectedParam::OverdriveDrive,
-            selecting_device: false,
+            device_stage: DeviceSelectStage::None,
+            selected_input_cursor: 0,
+            selected_output_cursor: 0,
+            chosen_input_device: None,
+            status_message: None,
             host,
             capture_devices,
             playback_devices,
@@ -93,12 +111,12 @@ impl TerminalApp {
         let mut out = stdout();
 
         loop {
-            // 1. Render Dashboard
+            // 1. Render Screen
             execute!(out, cursor::MoveTo(0, 0), Clear(ClearType::All))?;
-            if self.selecting_device {
-                self.render_device_selection(&mut out)?;
-            } else {
-                self.render_dashboard(&mut out, audio)?;
+            match self.device_stage {
+                DeviceSelectStage::SelectInput => self.render_select_input(&mut out)?,
+                DeviceSelectStage::SelectOutput => self.render_select_output(&mut out)?,
+                DeviceSelectStage::None => self.render_dashboard(&mut out, audio)?,
             }
             out.flush()?;
 
@@ -106,17 +124,22 @@ impl TerminalApp {
             if event::poll(Duration::from_millis(33))? {
                 if let Event::Key(key) = event::read()? {
                     if key.kind == KeyEventKind::Press {
-                        if self.selecting_device {
-                            if self.handle_device_key(key.code, audio)? {
-                                self.selecting_device = false;
+                        match self.device_stage {
+                            DeviceSelectStage::SelectInput => {
+                                self.handle_input_device_key(key.code);
                             }
-                        } else {
-                            match key.code {
+                            DeviceSelectStage::SelectOutput => {
+                                self.handle_output_device_key(key.code, audio);
+                            }
+                            DeviceSelectStage::None => match key.code {
                                 KeyCode::Char('q') | KeyCode::Char('Q') => break,
                                 KeyCode::Char('d') | KeyCode::Char('D') => {
                                     self.capture_devices = get_capture_devices(&self.host);
                                     self.playback_devices = get_playback_devices(&self.host);
-                                    self.selecting_device = true;
+                                    self.selected_input_cursor = 0;
+                                    self.selected_output_cursor = 0;
+                                    self.chosen_input_device = None;
+                                    self.device_stage = DeviceSelectStage::SelectInput;
                                 }
                                 KeyCode::Char('1') => {
                                     let cur = self.params.overdrive_enabled.load(Ordering::Relaxed);
@@ -151,13 +174,112 @@ impl TerminalApp {
                                     self.adjust_param(-1.0);
                                 }
                                 _ => {}
-                            }
+                            },
                         }
                     }
                 }
             }
         }
         Ok(())
+    }
+
+    fn handle_input_device_key(&mut self, code: KeyCode) {
+        match code {
+            KeyCode::Esc => {
+                self.device_stage = DeviceSelectStage::None;
+            }
+            KeyCode::Up => {
+                if self.selected_input_cursor > 0 {
+                    self.selected_input_cursor -= 1;
+                }
+            }
+            KeyCode::Down => {
+                if !self.capture_devices.is_empty()
+                    && self.selected_input_cursor + 1 < self.capture_devices.len()
+                {
+                    self.selected_input_cursor += 1;
+                }
+            }
+            KeyCode::Enter => {
+                if let Some(dev) = self.capture_devices.get(self.selected_input_cursor) {
+                    self.chosen_input_device = Some(dev.clone());
+                    self.device_stage = DeviceSelectStage::SelectOutput;
+                }
+            }
+            KeyCode::Char(c) if c.is_ascii_digit() => {
+                let idx = (c as u8 - b'0') as usize;
+                if let Some(dev) = self.capture_devices.get(idx) {
+                    self.chosen_input_device = Some(dev.clone());
+                    self.device_stage = DeviceSelectStage::SelectOutput;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_output_device_key(&mut self, code: KeyCode, audio: &mut AudioEngine) {
+        match code {
+            KeyCode::Esc => {
+                self.device_stage = DeviceSelectStage::None;
+            }
+            KeyCode::Backspace | KeyCode::Left => {
+                self.device_stage = DeviceSelectStage::SelectInput;
+            }
+            KeyCode::Up => {
+                if self.selected_output_cursor > 0 {
+                    self.selected_output_cursor -= 1;
+                }
+            }
+            KeyCode::Down => {
+                if !self.playback_devices.is_empty()
+                    && self.selected_output_cursor + 1 < self.playback_devices.len()
+                {
+                    self.selected_output_cursor += 1;
+                }
+            }
+            KeyCode::Enter => {
+                if let Some(out_info) = self.playback_devices.get(self.selected_output_cursor) {
+                    self.apply_device_switch(out_info.clone(), audio);
+                }
+            }
+            KeyCode::Char(c) if c.is_ascii_digit() => {
+                let idx = (c as u8 - b'0') as usize;
+                if let Some(out_info) = self.playback_devices.get(idx) {
+                    self.apply_device_switch(out_info.clone(), audio);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn apply_device_switch(&mut self, out_info: DeviceInfo, audio: &mut AudioEngine) {
+        if let Some(in_info) = self.chosen_input_device.take() {
+            let in_dev = get_input_device_by_name(&self.host, &in_info.name);
+            let out_dev = get_output_device_by_name(&self.host, &out_info.name);
+
+            match (in_dev, out_dev) {
+                (Some(in_d), Some(out_d)) => match audio.start(&in_d, &out_d) {
+                    Ok(_) => {
+                        self.status_message = Some(format!(
+                            "Device berhasil diubah! [{}] -> [{}]",
+                            in_info.name, out_info.name
+                        ));
+                    }
+                    Err(err) => {
+                        self.status_message = Some(format!("Gagal ganti audio stream: {}", err));
+                    }
+                },
+                (None, _) => {
+                    self.status_message =
+                        Some(format!("Input device tidak ditemukan: {}", in_info.name));
+                }
+                (_, None) => {
+                    self.status_message =
+                        Some(format!("Output device tidak ditemukan: {}", out_info.name));
+                }
+            }
+        }
+        self.device_stage = DeviceSelectStage::None;
     }
 
     fn adjust_param(&self, dir: f32) {
@@ -321,6 +443,16 @@ impl TerminalApp {
             ),
         )?;
 
+        if let Some(ref msg) = self.status_message {
+            execute!(
+                out,
+                Print("\n"),
+                SetForegroundColor(Color::Green),
+                Print(format!(" [*] {}\n", msg)),
+                ResetColor
+            )?;
+        }
+
         execute!(
             out,
             Print("\n"),
@@ -335,7 +467,7 @@ impl TerminalApp {
             Print(" CONTROLS\n"),
             Print("=========================================\n"),
             ResetColor,
-            Print(" [D] Select Device\n"),
+            Print(" [D] Select Audio Devices (2-Step Wizard)\n"),
             Print(" [1] Toggle Overdrive    [2] Toggle Distortion    [3] Toggle Delay\n"),
             Print(" [+] / [-] Adjust Parameter    [Tab] Cycle Active Parameter\n"),
             Print(" [B] Bypass All          [M] Mute Output          [Q] Quit\n"),
@@ -347,53 +479,125 @@ impl TerminalApp {
         Ok(())
     }
 
-    fn render_device_selection(&self, out: &mut std::io::Stdout) -> Result<()> {
+    fn render_select_input(&self, out: &mut std::io::Stdout) -> Result<()> {
         execute!(
             out,
             SetForegroundColor(Color::Yellow),
-            Print("=========================================\n"),
-            Print("        SELECT AUDIO DEVICES             \n"),
-            Print("=========================================\n\n"),
+            Print("=========================================================\n"),
+            Print("           [LANGKAH 1/2] PILIH INPUT DEVICE              \n"),
+            Print("=========================================================\n\n"),
             ResetColor,
-            SetForegroundColor(Color::Green),
-            Print("INPUT DEVICES (Vention / Guitar):\n"),
-            ResetColor
-        )?;
-
-        for (i, d) in self.capture_devices.iter().enumerate() {
-            let def = if d.is_default { " (Default)" } else { "" };
-            execute!(out, Print(format!("  [{}] {}{}\n", i, d.name, def)))?;
-        }
-
-        execute!(
-            out,
-            Print("\n"),
-            SetForegroundColor(Color::Green),
-            Print("OUTPUT DEVICES (VoiceMeeter AUX / Headphones):\n"),
-            ResetColor
-        )?;
-
-        for (i, d) in self.playback_devices.iter().enumerate() {
-            let def = if d.is_default { " (Default)" } else { "" };
-            execute!(out, Print(format!("  [{}] {}{}\n", i, d.name, def)))?;
-        }
-
-        execute!(
-            out,
-            Print("\n"),
+            Print(" Pilih input gitar (Vention USB / Sound Card / B1 / B2):\n"),
             SetForegroundColor(Color::Cyan),
-            Print("Press [ESC] to cancel and return to dashboard.\n"),
+            Print(" -> Tekan [ANGKA 0-9] langsung, atau [PANAH ATAS/BAWAH] + [ENTER]\n\n"),
+            ResetColor
+        )?;
+
+        if self.capture_devices.is_empty() {
+            execute!(
+                out,
+                SetForegroundColor(Color::Red),
+                Print("  (Tidak ada audio input device terdeteksi di sistem)\n\n"),
+                ResetColor
+            )?;
+        } else {
+            for (i, d) in self.capture_devices.iter().enumerate() {
+                let is_cursor = i == self.selected_input_cursor;
+                let pointer = if is_cursor { ">" } else { " " };
+                let def = if d.is_default { " (Default)" } else { "" };
+
+                if is_cursor {
+                    execute!(
+                        out,
+                        SetForegroundColor(Color::Green),
+                        Print(format!("  {} [{}] {}{}\n", pointer, i, d.name, def)),
+                        ResetColor
+                    )?;
+                } else {
+                    execute!(
+                        out,
+                        Print(format!("  {} [{}] {}{}\n", pointer, i, d.name, def))
+                    )?;
+                }
+            }
+        }
+
+        execute!(
+            out,
+            Print("\n"),
+            SetForegroundColor(Color::DarkGrey),
+            Print("=========================================================\n"),
+            Print(" [ESC] Batal dan kembali ke Dashboard\n"),
+            Print("=========================================================\n"),
             ResetColor
         )?;
 
         Ok(())
     }
 
-    fn handle_device_key(&mut self, code: KeyCode, _audio: &mut AudioEngine) -> Result<bool> {
-        match code {
-            KeyCode::Esc => Ok(true),
-            _ => Ok(false),
+    fn render_select_output(&self, out: &mut std::io::Stdout) -> Result<()> {
+        let in_name = self
+            .chosen_input_device
+            .as_ref()
+            .map(|d| d.name.as_str())
+            .unwrap_or("Unknown");
+
+        execute!(
+            out,
+            SetForegroundColor(Color::Yellow),
+            Print("=========================================================\n"),
+            Print("           [LANGKAH 2/2] PILIH OUTPUT DEVICE             \n"),
+            Print("=========================================================\n\n"),
+            ResetColor,
+            SetForegroundColor(Color::Green),
+            Print(format!(" Input Terpilih: [{}]\n\n", in_name)),
+            ResetColor,
+            Print(" Pilih output audio (VoiceMeeter AUX Input / Headphones):\n"),
+            SetForegroundColor(Color::Cyan),
+            Print(" -> Tekan [ANGKA 0-9] langsung, atau [PANAH ATAS/BAWAH] + [ENTER]\n\n"),
+            ResetColor
+        )?;
+
+        if self.playback_devices.is_empty() {
+            execute!(
+                out,
+                SetForegroundColor(Color::Red),
+                Print("  (Tidak ada audio output device terdeteksi di sistem)\n\n"),
+                ResetColor
+            )?;
+        } else {
+            for (i, d) in self.playback_devices.iter().enumerate() {
+                let is_cursor = i == self.selected_output_cursor;
+                let pointer = if is_cursor { ">" } else { " " };
+                let def = if d.is_default { " (Default)" } else { "" };
+
+                if is_cursor {
+                    execute!(
+                        out,
+                        SetForegroundColor(Color::Green),
+                        Print(format!("  {} [{}] {}{}\n", pointer, i, d.name, def)),
+                        ResetColor
+                    )?;
+                } else {
+                    execute!(
+                        out,
+                        Print(format!("  {} [{}] {}{}\n", pointer, i, d.name, def))
+                    )?;
+                }
+            }
         }
+
+        execute!(
+            out,
+            Print("\n"),
+            SetForegroundColor(Color::DarkGrey),
+            Print("=========================================================\n"),
+            Print(" [BACKSPACE] Kembali ke Input  |  [ESC] Batal\n"),
+            Print("=========================================================\n"),
+            ResetColor
+        )?;
+
+        Ok(())
     }
 }
 
