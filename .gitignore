@@ -1,5 +1,7 @@
 /target
 *.wav
+*.exe
+*.zip
 .superpowers/
 .cargo/*
 !.cargo/config.toml
