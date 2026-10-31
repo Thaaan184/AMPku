@@ -4,3 +4,4 @@ pub mod audio;
 pub mod core;
 pub mod dsp;
 pub mod engine;
+pub mod presets;

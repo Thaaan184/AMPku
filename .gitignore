@@ -1,4 +1,5 @@
 /target
 *.wav
 .superpowers/
+.cargo/
 # Cargo.lock (for libraries, keep tracked for binaries)
