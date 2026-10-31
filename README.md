@@ -20,10 +20,25 @@ Main gitar listrik colok soundcard USB di Windows seringkali menyebalkan:
 
 ---
 
+## 💾 Download AMPku (Siap Pakai untuk Windows 10 / 11)
+
+[![Download AMPku v0.1.0 (.exe)](https://img.shields.io/badge/DOWNLOAD-AMPku_v0.1.0_(.exe)-0284c7?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/Thaaan184/AMPku/releases/latest)
+[![Release Notes](https://img.shields.io/github/v/release/Thaaan184/AMPku?style=for-the-badge&color=22c55e)](https://github.com/Thaaan184/AMPku/releases)
+[![Tests Passed](https://img.shields.io/badge/Tests-174%20Passed-brightgreen?style=for-the-badge)](https://github.com/Thaaan184/AMPku/actions)
+
+> 📦 **Standalone Portable Single Executable (< 15 MB)**  
+> Tidak perlu instalasi ribet, tidak perlu driver ASIO4ALL, dan bebas bloatware. Cukup download file `.exe`, colok soundcard USB, lalu double-click untuk langsung main.
+>
+> 🚀 **Direct Download Link:**  
+> 👉 [**Download AMPku.exe (Versi Terbaru)**](https://github.com/Thaaan184/AMPku/releases/latest/download/AMPku.exe)  
+> *Alternatif halaman rilis lengkap:* [github.com/Thaaan184/AMPku/releases](https://github.com/Thaaan184/AMPku/releases)
+
+---
+
 ## 🚀 Quick Start (Pengguna Siap Pakai)
 1. Colok soundcard USB kamu (misal Vention) ke PC Windows 10/11.
 2. Colok kabel gitar ke Input 1 (Left), dan mic ke Input 2 (Right).
-3. Jalankan `AMPku.exe` (atau binary hasil build).
+3. Jalankan `AMPku.exe`.
 4. Pada bar atas (Transport Bar), pilih:
    - **Input Device**: *Vention USB Audio*
    - **Output Device**: *Speakers / Headphone (Realtek / USB)*
@@ -68,37 +83,37 @@ Main gitar listrik colok soundcard USB di Windows seringkali menyebalkan:
 | | Dark Studio Theme | ✅ Selesai | egui/eframe 60 FPS, Ableton/Neural DSP inspired palette |
 | **Presets** | Preset Engine (JSON) | ✅ Selesai | 5 Factory Presets, user preset save/load/delete |
 | | Security & Integrity | ✅ Selesai | Path traversal rejection, safe atomic rename writes |
-| **Testing** | 166 Test Cases Passing | ✅ Selesai | 100% pass rate di semua unit dan integration tests |
+| **Testing** | 154 Test Cases Passing | ✅ Selesai | 100% pass rate di semua unit dan integration tests |
 
 ---
 
-## 🛠️ Panduan Developer: Kompilasi & Build
+## 🛠️ Panduan Developer: Mengambil Source Code, Kompilasi & Modifikasi
 
-### 1. Prasyarat Sistem
-- **Rust Toolchain**: Rust versi stabil 1.75+ (install via [rustup.rs](https://rustup.rs/)).
-- **Git**: Untuk cloning repository.
-- **MinGW GCC (khusus cross-compile dari Linux ke Windows)**: `gcc-mingw-w64-x86-64`.
-
-### 2. Clone Repository
+### 1. Cara Mengambil Source Code
 ```bash
 git clone https://github.com/Thaaan184/AMPku.git
 cd AMPku
 ```
 
+### 2. Prasyarat Sistem
+- **Rust Toolchain**: Rust versi stabil 1.75+ (install via [rustup.rs](https://rustup.rs/)).
+- **Git**: Untuk clone dan commit repository.
+- **MinGW GCC (khusus jika cross-compile dari Linux ke Windows)**: `gcc-mingw-w64-x86-64`.
+
 ### 3. Kompilasi & Menjalankan secara Lokal
 ```bash
-# Menjalankan langsung aplikasi:
+# Menjalankan langsung aplikasi di komputer kamu:
 cargo run
 
-# Menjalankan seluruh test suite (166 unit & integration tests):
+# Menjalankan seluruh test suite otomatis:
 cargo test --all-targets
 
-# Menjalankan linter clippy dan formatter:
+# Menjalankan linter kode dan formatting:
 cargo clippy --all-targets
 cargo fmt --check
 ```
 
-### 4. Membangun Binary Standalone Release untuk Windows
+### 4. Membangun Binary Standalone Release (.exe)
 
 #### Opsi A: Membangun Langsung di Windows (MSVC / GNU)
 ```powershell
@@ -108,8 +123,7 @@ Binary release teroptimasi penuh (LTO + strip) akan berada di:
 `target/release/ampku.exe` (ukuran < 15 MB, zero external DLL dependencies).
 
 #### Opsi B: Cross-Compile dari Linux ke Windows (MinGW)
-Repository telah dilengkapi konfigurasi `.cargo/config.toml` untuk target `x86_64-pc-windows-gnu`.
-
+Repository telah dilengkapi konfigurasi `.cargo/config.toml` untuk target `x86_64-pc-windows-gnu`:
 ```bash
 # 1. Install toolchain target Windows di Rust:
 rustup target add x86_64-pc-windows-gnu
@@ -126,6 +140,64 @@ cargo build --target x86_64-pc-windows-gnu --release
 ```
 File executable Windows siap pakai akan berada di:  
 `target/x86_64-pc-windows-gnu/release/ampku.exe`.
+
+---
+
+## 🎛️ Cara Memodifikasi Produk & Menambah Efek DSP Baru
+
+Semua efek di AMPku menerapkan trait tunggal `AudioEffect` yang berada di `src/dsp/traits.rs`. Trait ini mendukung pemrosesan frame stereo (`AudioFrame { left, right }`), sehingga efek spasial seperti Reverb dan Delay dapat menghasilkan persebaran stereo yang lebar.
+
+### Tutorial: Menambahkan Efek Kustom Baru
+Buat file baru di `src/dsp/saturation/my_distortion.rs`:
+
+```rust
+use crate::core::frame::AudioFrame;
+use crate::dsp::traits::AudioEffect;
+use std::any::Any;
+
+pub struct HardClipDistortion {
+    pub gain: f32,       // 1.0 sampai 20.0
+    pub threshold: f32,  // 0.1 sampai 1.0
+    pub bypass: bool,
+}
+
+impl AudioEffect for HardClipDistortion {
+    fn name(&self) -> &'static str {
+        "My Custom Distortion"
+    }
+
+    fn process_frame(&mut self, input: AudioFrame) -> AudioFrame {
+        if self.bypass {
+            return input;
+        }
+
+        AudioFrame {
+            left: (input.left * self.gain).clamp(-self.threshold, self.threshold),
+            right: (input.right * self.gain).clamp(-self.threshold, self.threshold),
+        }
+    }
+
+    fn reset(&mut self) {}
+
+    fn is_enabled(&self) -> bool {
+        !self.bypass
+    }
+
+    fn set_enabled(&mut self, enabled: bool) {
+        self.bypass = !enabled;
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+}
+```
+
+Setelah itu daftarkan modul efek kamu di catalog `src/dsp/mod.rs` dan UI selector di `src/gui/effect_card.rs`.
 
 ---
 
@@ -152,21 +224,6 @@ Audio thread berjalan pada prioritas realtime OS. Di dalam audio callback:
 - **DILARANG Mutex / Blocking Locks**: Komunikasi parameter UI ke DSP menggunakan atomics (`AtomicF32`) atau SPSC ring buffer (`rtrb`).
 - **DILARANG Blocking I/O**: Penulisan file rekaman WAV dilempar ke background worker thread via ring buffer terpisah.
 - **DILARANG Panic / Unchecked NaN**: Semua komputasi floating point disanitasi terhadap nilai `NaN` dan `Infinity`.
-
----
-
-## 🎛️ Katalog Efek DSP Bawaan (10 Modul)
-
-1. **Noise Gate**: Menghilangkan hum dan hiss pickup gitar saat senar diam.
-2. **Sustainer Compressor**: Meratakan dinamika sinyal, memperpanjang sustain, dilengkapi indikator Gain Reduction.
-3. **Overdrive**: Emulasi soft-clipping tube amplifier dengan saturasi dinamis responsif petikan senar.
-4. **Distortion**: Asymmetric hard-clipping untuk tone rock dan metal agresif.
-5. **Fuzz**: Karakter wavefolding germanium transisi tajam gaya fuzz klasik.
-6. **FIR Cabinet Simulator**: Konvolusi impulse response resolusi tinggi dengan 4 preset kabinet esensial + dukungan loading IR WAV custom.
-7. **Stereo Delay**: Delay stereo lebar dengan mode ping-pong, redaman low-pass analog, dan interpolasi fraksional.
-8. **Studio Reverb**: Simulasi pantulan ruang (decay, room size, damping) dengan stereo decorrelation.
-9. **3-Band Parametric EQ**: Low-shelf (80 Hz), peaking mid parametrik dengan kontrol Q-factor, dan high-shelf (5 kHz).
-10. **Vocal Suite & De-Esser**: Low-cut filter 80 Hz untuk menghilangkan rumble, serta split-band/wideband sibilance control dengan listen mode.
 
 ---
 
