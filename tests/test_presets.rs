@@ -430,3 +430,201 @@ fn test_master_preset_serde_and_defaults() {
     let parsed: MasterPreset = serde_json::from_str(&json).unwrap();
     assert_eq!(parsed, default_master);
 }
+
+#[test]
+fn test_path_traversal_rejection() {
+    let temp = TempDir::new("traversal");
+    let mut manager = PresetManager::with_directory(&temp.path);
+    let preset = texas_blues();
+
+    let malicious_paths = [
+        "../escaped",
+        "../../etc/passwd",
+        r"..\escaped",
+        r"..\..\windows\system32",
+        "/etc/passwd",
+        "/absolute/path/tone",
+        "subdir/tone",
+        r"subdir\tone",
+        "..",
+        ".",
+        "nested/../tone",
+        "tone/..",
+        "bad\0name",
+    ];
+
+    for bad_path in malicious_paths {
+        // 1. load_preset rejects path traversal
+        let load_res = manager.load_preset(bad_path);
+        assert!(
+            matches!(load_res, Err(PresetError::InvalidName(_))),
+            "load_preset should reject '{bad_path}', got: {load_res:?}"
+        );
+
+        // 2. save_preset_as rejects path traversal
+        let save_res = manager.save_preset_as(&preset, bad_path);
+        assert!(
+            matches!(save_res, Err(PresetError::InvalidName(_))),
+            "save_preset_as should reject '{bad_path}', got: {save_res:?}"
+        );
+
+        // 3. delete_preset rejects path traversal
+        let del_res = manager.delete_preset(bad_path);
+        assert!(
+            matches!(del_res, Err(PresetError::InvalidName(_))),
+            "delete_preset should reject '{bad_path}', got: {del_res:?}"
+        );
+
+        // 4. validate_preset_filename helper rejects path traversal
+        let val_res = PresetManager::validate_preset_filename(bad_path);
+        assert!(
+            matches!(val_res, Err(PresetError::InvalidName(_))),
+            "validate_preset_filename should reject '{bad_path}', got: {val_res:?}"
+        );
+    }
+}
+
+#[test]
+fn test_non_json_files_ignored_in_disk_scan() {
+    let temp = TempDir::new("non_json_ignore");
+    let mut manager = PresetManager::with_directory(&temp.path);
+
+    // Create non-JSON files with invalid JSON contents matching factory preset stem
+    fs::write(
+        temp.path.join("TexasBlues.txt"),
+        "This is plain text, not valid JSON { broken",
+    )
+    .unwrap();
+    fs::write(
+        temp.path.join("TexasBlues.wav"),
+        b"RIFF\x24\x00\x00\x00WAVEfmt ",
+    )
+    .unwrap();
+    fs::write(
+        temp.path.join("TexasBlues.bak"),
+        "backup corrupt binary data",
+    )
+    .unwrap();
+    fs::write(temp.path.join("CustomTone.txt"), "non-json user file").unwrap();
+
+    // 1. load_preset ignores TexasBlues.txt / .wav / .bak and falls back to factory preset
+    let loaded = manager
+        .load_preset("TexasBlues")
+        .expect("should ignore non-json files and fall back to factory preset");
+    assert_eq!(loaded.name, "TexasBlues");
+    assert_eq!(loaded.category, "Blues");
+
+    // 2. load_preset ignores CustomTone.txt and returns NotFound, NOT Json parse error
+    let not_found = manager.load_preset("CustomTone");
+    assert!(
+        matches!(not_found, Err(PresetError::NotFound(_))),
+        "should return NotFound for non-json CustomTone.txt, got: {not_found:?}"
+    );
+
+    // 3. list_user_presets ignores all non-json files
+    let user_list = manager.list_user_presets().unwrap();
+    assert!(user_list.is_empty(), "non-json files must not be listed");
+}
+
+#[test]
+fn test_factory_lookup_with_json_suffix() {
+    let temp = TempDir::new("factory_json_suffix");
+    let mut manager = PresetManager::with_directory(&temp.path);
+
+    for &name in &FACTORY_PRESET_NAMES {
+        // Querying with lowercase .json suffix
+        let query = format!("{name}.json");
+        let loaded = manager
+            .load_preset(&query)
+            .unwrap_or_else(|e| panic!("failed to load factory preset with '{query}': {e}"));
+        assert_eq!(loaded.name, name);
+
+        // Querying with uppercase .JSON suffix
+        let query_upper = format!("{name}.JSON");
+        let loaded_upper = manager
+            .load_preset(&query_upper)
+            .unwrap_or_else(|e| panic!("failed to load factory preset with '{query_upper}': {e}"));
+        assert_eq!(loaded_upper.name, name);
+    }
+
+    // Also test case-insensitive factory name with .json
+    let ca = manager
+        .load_preset("clean ambient.json")
+        .expect("should load clean ambient.json");
+    assert_eq!(ca.name, "CleanAmbient");
+
+    let tb = manager
+        .load_preset("texas_blues.json")
+        .expect("should load texas_blues.json");
+    assert_eq!(tb.name, "TexasBlues");
+}
+
+#[test]
+fn test_atomic_write_integrity() {
+    let temp = TempDir::new("atomic_write");
+    let mut manager = PresetManager::with_directory(&temp.path);
+
+    let custom = PresetData::new(
+        "AtomicTone",
+        ChannelPreset::new(0.88, -0.1),
+        ChannelPreset::new(0.92, 0.1),
+    )
+    .with_description("Atomic write verification");
+
+    // 1. Initial save via save_preset_as
+    let saved_path = manager
+        .save_preset_as(&custom, "AtomicTone")
+        .expect("failed to save preset atomically");
+    assert!(saved_path.is_file());
+
+    // Verify written content is valid and matches
+    let content = fs::read_to_string(&saved_path).unwrap();
+    let reloaded: PresetData = serde_json::from_str(&content).unwrap();
+    assert_eq!(reloaded.name, "AtomicTone");
+    assert_eq!(reloaded.guitar_channel.volume, 0.88);
+
+    // Verify no temporary files remain in directory
+    for entry in fs::read_dir(&temp.path).unwrap() {
+        let entry = entry.unwrap();
+        let fname = entry.file_name().to_string_lossy().into_owned();
+        assert!(
+            !fname.ends_with(".tmp"),
+            "temporary file left behind: {fname}"
+        );
+    }
+
+    // 2. Atomic overwrite test: modify preset and save again
+    let mut updated = custom.clone();
+    updated.guitar_channel.volume = 0.77;
+    updated.description = "Updated atomic tone".to_string();
+
+    manager
+        .save_preset_as(&updated, "AtomicTone.json")
+        .expect("failed to overwrite preset atomically");
+
+    let updated_content = fs::read_to_string(&saved_path).unwrap();
+    let updated_reloaded: PresetData = serde_json::from_str(&updated_content).unwrap();
+    assert_eq!(updated_reloaded.guitar_channel.volume, 0.77);
+    assert_eq!(updated_reloaded.description, "Updated atomic tone");
+
+    // Again verify no .tmp files exist
+    for entry in fs::read_dir(&temp.path).unwrap() {
+        let entry = entry.unwrap();
+        let fname = entry.file_name().to_string_lossy().into_owned();
+        assert!(
+            !fname.ends_with(".tmp"),
+            "temporary file left behind after overwrite: {fname}"
+        );
+    }
+
+    // 3. Direct save_to_file with nested parent directories
+    let nested_path = temp.path.join("subfolder").join("NestedTone.json");
+    manager
+        .save_to_file(&custom, &nested_path)
+        .expect("save_to_file should create parents and write atomically");
+    assert!(nested_path.is_file());
+    let loaded_nested = manager
+        .load_from_file(&nested_path)
+        .expect("failed to load nested file");
+    assert_eq!(loaded_nested.name, "AtomicTone");
+}

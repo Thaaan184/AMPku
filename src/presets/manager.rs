@@ -127,6 +127,78 @@ impl PresetManager {
         &FACTORY_PRESET_NAMES
     }
 
+    /// Validate that a preset name or filename contains no path traversal components,
+    /// directory separators, or invalid path tokens.
+    ///
+    /// Returns the sanitized `.json` filename if valid, or `PresetError::InvalidName`
+    /// if traversal or invalid characters are detected.
+    pub fn validate_preset_filename(name: &str) -> Result<String, PresetError> {
+        let trimmed = name.trim();
+        if trimmed.is_empty() {
+            return Err(PresetError::InvalidName("Preset name is empty".to_string()));
+        }
+
+        // Reject directory separators, parent directory traversal, and null bytes
+        if trimmed.contains('/')
+            || trimmed.contains('\\')
+            || trimmed.contains("..")
+            || trimmed.chars().any(|c| c.is_control() || c == '\0')
+        {
+            return Err(PresetError::InvalidName(format!(
+                "Path traversal detected in preset name: '{name}'"
+            )));
+        }
+
+        let p = Path::new(trimmed);
+        if p.is_absolute() {
+            return Err(PresetError::InvalidName(format!(
+                "Absolute path not allowed: '{name}'"
+            )));
+        }
+
+        // Single component check
+        let components: Vec<_> = p.components().collect();
+        if components.len() != 1 || !matches!(components[0], std::path::Component::Normal(_)) {
+            return Err(PresetError::InvalidName(format!(
+                "Invalid preset filename component: '{name}'"
+            )));
+        }
+
+        let filename =
+            if trimmed.len() >= 5 && trimmed[trimmed.len() - 5..].eq_ignore_ascii_case(".json") {
+                trimmed.to_string()
+            } else {
+                format!("{trimmed}.json")
+            };
+
+        // Re-check normalized filename
+        let file_path = Path::new(&filename);
+        let file_components: Vec<_> = file_path.components().collect();
+        if file_components.len() != 1
+            || !matches!(file_components[0], std::path::Component::Normal(_))
+        {
+            return Err(PresetError::InvalidName(format!(
+                "Invalid preset filename: '{name}'"
+            )));
+        }
+
+        Ok(filename)
+    }
+
+    /// Resolve a preset name to a safe, canonical path strictly within `preset_dir`.
+    pub fn resolve_preset_path(&self, name: &str) -> Result<PathBuf, PresetError> {
+        let filename = Self::validate_preset_filename(name)?;
+        let resolved = self.preset_dir.join(&filename);
+
+        if resolved.parent() != Some(&self.preset_dir) {
+            return Err(PresetError::InvalidName(format!(
+                "Resolved path escapes preset directory: '{name}'"
+            )));
+        }
+
+        Ok(resolved)
+    }
+
     /// List all available user presets stored as `.json` files in the preset directory.
     pub fn list_user_presets(&self) -> Result<Vec<String>, PresetError> {
         if !self.preset_dir.exists() {
@@ -138,6 +210,11 @@ impl PresetManager {
             let entry = entry?;
             let path = entry.path();
             if path.is_file() {
+                if let Some(file_name) = path.file_name().and_then(|f| f.to_str()) {
+                    if file_name.starts_with('.') {
+                        continue;
+                    }
+                }
                 if let Some(ext) = path.extension() {
                     if ext.eq_ignore_ascii_case("json") {
                         if let Some(stem) = path.file_stem() {
@@ -181,31 +258,43 @@ impl PresetManager {
             return Err(PresetError::InvalidName("Preset name is empty".to_string()));
         }
 
-        // 1. Check if direct file exists on disk
-        let filename = if trimmed.ends_with(".json") {
-            trimmed.to_string()
-        } else {
-            format!("{trimmed}.json")
-        };
-        let file_path = self.preset_dir.join(&filename);
+        // Validate name against path traversal
+        let file_path = self.resolve_preset_path(trimmed)?;
 
+        // 1. Check if direct file exists on disk
         if file_path.is_file() {
             let data = self.load_from_file(&file_path)?;
             self.current_preset = Some(data.clone());
             return Ok(data);
         }
 
-        // 2. Check case-insensitive match among disk files
+        // Determine query stem without .json extension for scanning and factory lookup
+        let query_stem =
+            if trimmed.len() >= 5 && trimmed[trimmed.len() - 5..].eq_ignore_ascii_case(".json") {
+                &trimmed[..trimmed.len() - 5]
+            } else {
+                trimmed
+            };
+
+        // 2. Check case-insensitive match among .json files on disk
         if self.preset_dir.is_dir() {
             if let Ok(entries) = fs::read_dir(&self.preset_dir) {
                 for entry in entries.flatten() {
                     let path = entry.path();
                     if path.is_file() {
-                        if let Some(stem) = path.file_stem() {
-                            if stem.to_string_lossy().eq_ignore_ascii_case(trimmed) {
-                                let data = self.load_from_file(&path)?;
-                                self.current_preset = Some(data.clone());
-                                return Ok(data);
+                        let is_json = path
+                            .extension()
+                            .and_then(|ext| ext.to_str())
+                            .map(|ext| ext.eq_ignore_ascii_case("json"))
+                            .unwrap_or(false);
+
+                        if is_json {
+                            if let Some(stem) = path.file_stem() {
+                                if stem.to_string_lossy().eq_ignore_ascii_case(query_stem) {
+                                    let data = self.load_from_file(&path)?;
+                                    self.current_preset = Some(data.clone());
+                                    return Ok(data);
+                                }
                             }
                         }
                     }
@@ -213,8 +302,8 @@ impl PresetManager {
             }
         }
 
-        // 3. Fall back to factory presets
-        if let Some(factory) = defaults::get_factory_preset(trimmed) {
+        // 3. Fall back to factory presets (stripping .json suffix via query_stem)
+        if let Some(factory) = defaults::get_factory_preset(query_stem) {
             self.current_preset = Some(factory.clone());
             return Ok(factory);
         }
@@ -231,6 +320,18 @@ impl PresetManager {
         Ok(preset)
     }
 
+    /// Save a preset to an explicit filesystem path using atomic write semantics (.tmp file + rename).
+    pub fn save_to_file(
+        &self,
+        preset: &PresetData,
+        path: impl AsRef<Path>,
+    ) -> Result<(), PresetError> {
+        let path = path.as_ref();
+        let json_text = serde_json::to_string_pretty(preset)?;
+        atomic_write(path, &json_text)?;
+        Ok(())
+    }
+
     /// Save a preset to disk using its sanitized `.name` attribute.
     ///
     /// Creates the preset directory if needed and writes formatted JSON.
@@ -245,23 +346,15 @@ impl PresetManager {
         self.save_preset_as(preset, &filename)
     }
 
-    /// Save a preset to disk with a specified filename.
+    /// Save a preset to disk with a specified filename using atomic write semantics.
     pub fn save_preset_as(
         &mut self,
         preset: &PresetData,
         filename: &str,
     ) -> Result<PathBuf, PresetError> {
         self.ensure_directory()?;
-
-        let mut fname = filename.trim().to_string();
-        if !fname.ends_with(".json") {
-            fname.push_str(".json");
-        }
-
-        let target_path = self.preset_dir.join(&fname);
-        let json_text = serde_json::to_string_pretty(preset)?;
-        fs::write(&target_path, json_text)?;
-
+        let target_path = self.resolve_preset_path(filename)?;
+        self.save_to_file(preset, &target_path)?;
         self.current_preset = Some(preset.clone());
         Ok(target_path)
     }
@@ -270,15 +363,8 @@ impl PresetManager {
     ///
     /// Returns `Ok(true)` if deleted, `Ok(false)` if the file did not exist.
     pub fn delete_preset(&self, name: &str) -> Result<bool, PresetError> {
-        let trimmed = name.trim();
-        let filename = if trimmed.ends_with(".json") {
-            trimmed.to_string()
-        } else {
-            format!("{trimmed}.json")
-        };
-        let file_path = self.preset_dir.join(&filename);
-
-        if file_path.exists() {
+        let file_path = self.resolve_preset_path(name)?;
+        if file_path.is_file() {
             fs::remove_file(file_path)?;
             Ok(true)
         } else {
@@ -309,8 +395,7 @@ impl PresetManager {
             let filename = format!("{}.json", factory.name);
             let path = self.preset_dir.join(&filename);
             if !path.exists() {
-                let json_text = serde_json::to_string_pretty(&factory)?;
-                fs::write(&path, json_text)?;
+                self.save_to_file(&factory, &path)?;
                 written += 1;
             }
         }
@@ -330,6 +415,39 @@ impl PresetManager {
             .apply_to_channels(guitar, mic, sample_rate)
             .map_err(PresetError::Dsp)
     }
+}
+
+/// Atomically write data to `target_path` by first writing to a temporary `.tmp` file
+/// in the same directory and renaming it to `target_path`.
+fn atomic_write(target_path: &Path, content: &str) -> Result<(), std::io::Error> {
+    let parent = target_path.parent().unwrap_or_else(|| Path::new("."));
+    if !parent.as_os_str().is_empty() && !parent.exists() {
+        fs::create_dir_all(parent)?;
+    }
+
+    let file_name = target_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("preset");
+
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+
+    let tmp_path = parent.join(format!(".{file_name}.{}.{nanos}.tmp", std::process::id()));
+
+    let res = (|| -> Result<(), std::io::Error> {
+        fs::write(&tmp_path, content)?;
+        fs::rename(&tmp_path, target_path)?;
+        Ok(())
+    })();
+
+    if res.is_err() {
+        let _ = fs::remove_file(&tmp_path);
+    }
+
+    res
 }
 
 /// Determine default directory path for presets based on host operating system.
@@ -372,9 +490,13 @@ fn sanitize_filename(name: &str) -> String {
         }
     }
     let trimmed = safe.trim().trim_matches('.');
-    if trimmed.is_empty() {
+    let mut cleaned = trimmed.to_string();
+    while cleaned.contains("..") {
+        cleaned = cleaned.replace("..", "_");
+    }
+    if cleaned.is_empty() {
         "preset".to_string()
     } else {
-        trimmed.to_string()
+        cleaned
     }
 }
