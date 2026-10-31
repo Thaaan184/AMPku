@@ -320,3 +320,18 @@ fn test_nan_and_inf_robustness() {
         }
     }
 }
+
+#[test]
+fn test_distortion_subnormal_flush() {
+    let mut dist = Distortion::new(10.0, 0.5, 1.0);
+    // Send a subnormal impulse
+    let subnormal = AudioFrame::new(1e-30, 1e-30);
+    let out = dist.process_frame(subnormal);
+    assert_eq!(out, AudioFrame::ZERO);
+
+    // Process silence for a burst of frames: states must stay exact 0.0 without denormal assist
+    for _ in 0..100 {
+        let out = dist.process_frame(AudioFrame::ZERO);
+        assert_eq!(out, AudioFrame::ZERO);
+    }
+}

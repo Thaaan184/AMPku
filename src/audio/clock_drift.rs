@@ -20,6 +20,27 @@ pub const DEFAULT_MAX_RATIO: f32 = 1.05;
 /// Thread-safe shared handle to a [`ClockDriftBuffer`].
 pub type SharedClockDriftBuffer = Arc<Mutex<ClockDriftBuffer>>;
 
+/// Default spin retry iterations for brief mutex lock contention in real-time audio callbacks.
+pub const DEFAULT_TRY_LOCK_SPINS: usize = 128;
+
+/// Attempt to acquire a mutex lock with a short bounded spin retry loop.
+///
+/// Prevents full buffer drops when concurrent real-time audio threads collide
+/// on brief microsecond-scale buffer operations.
+#[inline]
+pub fn try_lock_spin<'a, T>(
+    mutex: &'a Mutex<T>,
+    max_spins: usize,
+) -> Option<std::sync::MutexGuard<'a, T>> {
+    for _ in 0..max_spins {
+        if let Ok(guard) = mutex.try_lock() {
+            return Some(guard);
+        }
+        std::hint::spin_loop();
+    }
+    None
+}
+
 /// 4-point Hermite cubic spline interpolation.
 ///
 /// Preserves audio fidelity with continuous first derivatives across sample boundaries.

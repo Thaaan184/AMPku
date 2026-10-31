@@ -193,6 +193,12 @@ impl MasterBus {
         self.gain_reduction_db.get()
     }
 
+    /// Set current limiter gain reduction in decibels (for decoupled UI visualization).
+    #[inline]
+    pub fn set_gain_reduction_db(&self, db: f32) {
+        self.gain_reduction_db.set(db);
+    }
+
     /// Reference to master output VU meter.
     #[inline]
     pub fn meter(&self) -> &ChannelMeter {

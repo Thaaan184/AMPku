@@ -167,6 +167,30 @@ impl ChannelMeter {
         self.max_peak_right.set(0.0);
     }
 
+    /// Directly set meter levels and clipping state (for decoupled UI visualization).
+    pub fn set_levels(&self, peak_left: f32, peak_right: f32, rms_left: f32, rms_right: f32) {
+        self.peak_left.set(peak_left);
+        self.peak_right.set(peak_right);
+        self.rms_left.set(rms_left);
+        self.rms_right.set(rms_right);
+        self.max_peak_left.update_max(peak_left);
+        self.max_peak_right.update_max(peak_right);
+        if peak_left >= 1.0 || peak_right >= 1.0 {
+            self.clipped.store(true, Ordering::Relaxed);
+        }
+    }
+
+    /// Copy levels and clipping state from another meter.
+    pub fn copy_from(&self, other: &ChannelMeter) {
+        self.peak_left.set(other.peak_left());
+        self.peak_right.set(other.peak_right());
+        self.rms_left.set(other.rms_left());
+        self.rms_right.set(other.rms_right());
+        self.max_peak_left.set(other.max_peak_left.get());
+        self.max_peak_right.set(other.max_peak_right.get());
+        self.clipped.store(other.is_clipped(), Ordering::Relaxed);
+    }
+
     /// Reset all meter values and clipping indicators to zero.
     pub fn reset(&self) {
         self.peak_left.set(0.0);

@@ -161,6 +161,9 @@ impl Distortion {
         *tone_state += tone_alpha * (clipped - *tone_state);
 
         // Subnormal guard
+        if pre_state.abs() < 1e-25 {
+            *pre_state = 0.0;
+        }
         if tone_state.abs() < 1e-25 {
             *tone_state = 0.0;
         }

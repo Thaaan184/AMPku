@@ -409,3 +409,44 @@ fn test_audio_engine_mono_input_no_bleed() {
     assert!(m_pk_l <= -100.0);
     assert!(m_pk_r <= -100.0);
 }
+
+#[test]
+fn test_clock_drift_try_lock_spin_concurrency() {
+    use ampku::audio::clock_drift::{try_lock_spin, ClockDriftBuffer};
+    use std::sync::{Arc, Mutex};
+    use std::thread;
+    use std::time::Duration;
+
+    let buf = Arc::new(Mutex::new(ClockDriftBuffer::new(512)));
+
+    // 1. When unlocked, acquires immediately
+    let guard = try_lock_spin(&buf, 10);
+    assert!(guard.is_some());
+    drop(guard);
+
+    // 2. Resolve brief contention from background thread
+    let buf_clone = buf.clone();
+    let thread = thread::spawn(move || {
+        let _g = buf_clone.lock().unwrap();
+        thread::sleep(Duration::from_micros(20));
+    });
+
+    // Main thread spins and acquires without dropping
+    thread.join().unwrap();
+    let guard = try_lock_spin(&buf, 100);
+    assert!(guard.is_some());
+    drop(guard);
+
+    // 3. When locked by another thread, returns None after spin limit without blocking
+    let (tx, rx) = std::sync::mpsc::channel();
+    let buf_clone = buf.clone();
+    let thread = thread::spawn(move || {
+        let _g = buf_clone.lock().unwrap();
+        tx.send(()).unwrap();
+        thread::sleep(Duration::from_millis(10));
+    });
+    rx.recv().unwrap();
+    let timed_out = try_lock_spin(&buf, 20);
+    assert!(timed_out.is_none());
+    thread.join().unwrap();
+}

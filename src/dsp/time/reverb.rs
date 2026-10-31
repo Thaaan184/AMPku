@@ -101,7 +101,10 @@ impl AllpassFilter {
 
     #[inline]
     fn process(&mut self, input: f32) -> f32 {
-        let buf_out = self.buffer[self.buf_idx];
+        let mut buf_out = self.buffer[self.buf_idx];
+        if buf_out.abs() < 1e-15 {
+            buf_out = 0.0;
+        }
         let output = -input + buf_out;
         self.buffer[self.buf_idx] = input + buf_out * self.feedback;
 

@@ -15,8 +15,11 @@ use crate::dsp::dynamics::{Compressor, NoiseGate};
 use crate::dsp::filters::biquad::{BiquadFilter, FilterType};
 use crate::dsp::saturation::{Distortion, Fuzz, Overdrive};
 use crate::dsp::time::{StereoDelay, StereoReverb};
+use crate::dsp::traits::AudioEffect;
 use crate::dsp::vocal::{DeEsserMode, VocalDeEsser};
 use crate::engine::chain::EffectChain;
+use crate::engine::channel::ChannelStrip;
+use crate::engine::master_bus::MasterBus;
 use crate::gui::channel_strip::render_dual_channel_strips;
 use crate::gui::theme::{
     apply_studio_theme, COLOR_ACCENT_BLUE, COLOR_ALERT_RED, COLOR_ALERT_RED_BG,
@@ -57,6 +60,12 @@ pub struct AmpkuApp {
     pub recordings_dir: PathBuf,
     /// Ephemeral status/error message banner displayed in the UI: `(text, is_error, timestamp)`.
     pub status_message: Option<(String, bool, Instant)>,
+    /// Decoupled local Guitar channel strip for lock-free UI rendering.
+    pub gui_guitar: ChannelStrip,
+    /// Decoupled local Mic channel strip for lock-free UI rendering.
+    pub gui_mic: ChannelStrip,
+    /// Decoupled local Master bus for lock-free UI rendering.
+    pub gui_master: MasterBus,
 }
 
 impl Default for AmpkuApp {
@@ -116,6 +125,9 @@ impl AmpkuApp {
             show_save_dialog: false,
             recordings_dir: PathBuf::from("./recordings"),
             status_message: None,
+            gui_guitar: ChannelStrip::with_sample_rate("Guitar (Ch 1)", sample_rate as f32),
+            gui_mic: ChannelStrip::with_sample_rate("Mic (Ch 2)", sample_rate as f32),
+            gui_master: MasterBus::with_sample_rate(sample_rate as f32),
         };
 
         // Ensure recordings directory exists
@@ -155,6 +167,19 @@ impl AmpkuApp {
         match self.preset_manager.load_preset(name) {
             Ok(preset) => {
                 let sr = self.sample_rate as f32;
+                // Apply to local decoupled GUI strips first (lock-free)
+                let _ = preset.apply_to_channels(&mut self.gui_guitar, &mut self.gui_mic, sr);
+                if let Some(ref master_preset) = preset.master {
+                    self.gui_master.set_gain(master_preset.volume);
+                    self.gui_master
+                        .set_threshold_db(master_preset.limiter_threshold_db);
+                    self.gui_master
+                        .set_ceiling_db(master_preset.limiter_ceiling_db);
+                    self.gui_master
+                        .set_release_ms(master_preset.limiter_release_ms);
+                }
+
+                // Apply to real-time audio engine in short lock acquisitions
                 let apply_result = if let (Ok(mut guitar), Ok(mut mic)) = (
                     self.engine.guitar_channel().lock(),
                     self.engine.mic_channel().lock(),
@@ -190,50 +215,29 @@ impl AmpkuApp {
 
     /// Capture current channel strips and master bus state into a `PresetData` and persist to disk.
     pub fn save_preset(&mut self, name: &str) {
-        let channel_presets = if let (Ok(guitar), Ok(mic)) = (
-            self.engine.guitar_channel().lock(),
-            self.engine.mic_channel().lock(),
-        ) {
-            Some((
-                ChannelPreset {
-                    volume: guitar.gain(),
-                    pan: guitar.pan(),
-                    muted: guitar.is_muted(),
-                    solo: guitar.is_solo(),
-                    mono: guitar.is_mono(),
-                    effects: serialize_chain(&guitar.chain),
-                },
-                ChannelPreset {
-                    volume: mic.gain(),
-                    pan: mic.pan(),
-                    muted: mic.is_muted(),
-                    solo: mic.is_solo(),
-                    mono: mic.is_mono(),
-                    effects: serialize_chain(&mic.chain),
-                },
-            ))
-        } else {
-            None
+        let guitar_preset = ChannelPreset {
+            volume: self.gui_guitar.gain(),
+            pan: self.gui_guitar.pan(),
+            muted: self.gui_guitar.is_muted(),
+            solo: self.gui_guitar.is_solo(),
+            mono: self.gui_guitar.is_mono(),
+            effects: serialize_chain(&self.gui_guitar.chain),
+        };
+        let mic_preset = ChannelPreset {
+            volume: self.gui_mic.gain(),
+            pan: self.gui_mic.pan(),
+            muted: self.gui_mic.is_muted(),
+            solo: self.gui_mic.is_solo(),
+            mono: self.gui_mic.is_mono(),
+            effects: serialize_chain(&self.gui_mic.chain),
         };
 
-        let (guitar_preset, mic_preset) = match channel_presets {
-            Some(presets) => presets,
-            None => {
-                self.set_status("Failed to acquire channel strip lock for saving", true);
-                return;
-            }
-        };
-
-        let master_preset = if let Ok(master) = self.engine.master_bus().lock() {
-            MasterPreset {
-                volume: master.gain(),
-                pan: 0.0,
-                limiter_threshold_db: master.threshold_db(),
-                limiter_ceiling_db: master.ceiling_db(),
-                limiter_release_ms: master.release_ms(),
-            }
-        } else {
-            MasterPreset::default()
+        let master_preset = MasterPreset {
+            volume: self.gui_master.gain(),
+            pan: 0.0,
+            limiter_threshold_db: self.gui_master.threshold_db(),
+            limiter_ceiling_db: self.gui_master.ceiling_db(),
+            limiter_release_ms: self.gui_master.release_ms(),
         };
 
         let preset_data =
@@ -488,6 +492,29 @@ impl AmpkuApp {
         // Continuous 60 FPS repainting for real-time VU meter ballistics and duration timer
         ctx.request_repaint_after(std::time::Duration::from_millis(16));
 
+        // Synchronize live atomic meters from engine to local GUI channels without blocking
+        let meters = self.engine.meters();
+        self.gui_guitar.meter().set_levels(
+            meters.guitar_peak_left.get(),
+            meters.guitar_peak_right.get(),
+            meters.guitar_rms_left.get(),
+            meters.guitar_rms_right.get(),
+        );
+        self.gui_mic.meter().set_levels(
+            meters.mic_peak_left.get(),
+            meters.mic_peak_right.get(),
+            meters.mic_rms_left.get(),
+            meters.mic_rms_right.get(),
+        );
+        self.gui_master.meter().set_levels(
+            meters.master_peak_left.get(),
+            meters.master_peak_right.get(),
+            meters.master_rms_left.get(),
+            meters.master_rms_right.get(),
+        );
+        self.gui_master
+            .set_gain_reduction_db(meters.master_gain_reduction.get());
+
         // 1. Top Transport Header Panel
         let mut top_action = TransportAction::None;
         egui::TopBottomPanel::top("ampku_top_panel").show(ctx, |ui| {
@@ -515,32 +542,41 @@ impl AmpkuApp {
         // Handle transport action from header
         self.handle_transport_action(top_action);
 
-        // 2. Bottom Master Bus & Limiter Panel
+        // 2. Bottom Master Bus & Limiter Panel (rendered lock-free)
         egui::TopBottomPanel::bottom("ampku_bottom_panel").show(ctx, |ui| {
-            if let Ok(mut master) = self.engine.master_bus().lock() {
-                render_master_sum_bar(ui, &mut master);
-            }
+            render_master_sum_bar(ui, &mut self.gui_master);
         });
 
-        // 3. Central Dual Channel Strips (Guitar Ch 1 & Mic Ch 2)
+        // 3. Central Dual Channel Strips (Guitar Ch 1 & Mic Ch 2) (rendered lock-free)
         egui::CentralPanel::default().show(ctx, |ui| {
             self.render_status_banner(ui);
 
             egui::ScrollArea::vertical()
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
-                    if let (Ok(mut guitar), Ok(mut mic)) = (
-                        self.engine.guitar_channel().lock(),
-                        self.engine.mic_channel().lock(),
-                    ) {
-                        render_dual_channel_strips(ui, &mut guitar, &mut mic);
-                    }
+                    render_dual_channel_strips(ui, &mut self.gui_guitar, &mut self.gui_mic);
                 });
         });
 
         // 4. Modal Save Preset Dialog
         if self.show_save_dialog {
             self.render_save_preset_dialog(ctx);
+        }
+
+        // 5. Brief non-blocking parameter push to real-time audio thread
+        let sr = self.sample_rate as f32;
+        if let Ok(mut guitar) = self.engine.guitar_channel().try_lock() {
+            sync_channel(&self.gui_guitar, &mut guitar, sr);
+        }
+        if let Ok(mut mic) = self.engine.mic_channel().try_lock() {
+            sync_channel(&self.gui_mic, &mut mic, sr);
+        }
+        if let Ok(master) = self.engine.master_bus().try_lock() {
+            master.set_gain(self.gui_master.gain());
+            master.set_threshold_db(self.gui_master.threshold_db());
+            master.set_ceiling_db(self.gui_master.ceiling_db());
+            master.set_release_ms(self.gui_master.release_ms());
+            master.set_bypass(self.gui_master.is_bypassed());
         }
     }
 }
@@ -656,4 +692,128 @@ fn serialize_chain(chain: &EffectChain) -> Vec<EffectPreset> {
     }
 
     presets
+}
+
+/// Synchronize state from local decoupled GUI channel strip to real-time engine channel strip.
+fn sync_channel(src: &ChannelStrip, dst: &mut ChannelStrip, sample_rate: f32) {
+    dst.set_gain(src.gain());
+    dst.set_pan(src.pan());
+    dst.set_muted(src.is_muted());
+    dst.set_solo(src.is_solo());
+    dst.set_mono(src.is_mono());
+
+    let src_len = src.chain.len();
+    let dst_len = dst.chain.len();
+    let mut structure_matches = src_len == dst_len;
+    if structure_matches {
+        for i in 0..src_len {
+            if src.chain.effects()[i].name() != dst.chain.effects()[i].name() {
+                structure_matches = false;
+                break;
+            }
+        }
+    }
+
+    if structure_matches {
+        for i in 0..src_len {
+            sync_effect(
+                src.chain.effects()[i].as_ref(),
+                dst.chain_mut().effects_mut()[i].as_mut(),
+            );
+        }
+    } else {
+        let presets = serialize_chain(&src.chain);
+        dst.chain_mut().clear();
+        for ep in &presets {
+            if let Ok(boxed) = ep.instantiate(sample_rate) {
+                dst.chain_mut().add_effect(boxed);
+            }
+        }
+    }
+}
+
+/// Synchronize individual effect parameters between matching effect instances.
+fn sync_effect(src: &dyn AudioEffect, dst: &mut dyn AudioEffect) {
+    dst.set_enabled(src.is_enabled());
+    let src_any = src.as_any();
+    let dst_any = dst.as_any_mut();
+
+    if let (Some(s), Some(d)) = (
+        src_any.downcast_ref::<NoiseGate>(),
+        dst_any.downcast_mut::<NoiseGate>(),
+    ) {
+        d.set_params(s.threshold_db(), s.attack_ms(), s.hold_ms(), s.release_ms());
+    } else if let (Some(s), Some(d)) = (
+        src_any.downcast_ref::<Compressor>(),
+        dst_any.downcast_mut::<Compressor>(),
+    ) {
+        d.set_params(
+            s.sample_rate(),
+            s.threshold_db(),
+            s.ratio(),
+            s.attack_ms(),
+            s.release_ms(),
+            s.makeup_gain_db(),
+        );
+    } else if let (Some(s), Some(d)) = (
+        src_any.downcast_ref::<Overdrive>(),
+        dst_any.downcast_mut::<Overdrive>(),
+    ) {
+        d.set_params(s.drive(), s.tone(), s.level());
+    } else if let (Some(s), Some(d)) = (
+        src_any.downcast_ref::<Distortion>(),
+        dst_any.downcast_mut::<Distortion>(),
+    ) {
+        d.set_params(s.drive(), s.tone(), s.level());
+    } else if let (Some(s), Some(d)) = (
+        src_any.downcast_ref::<Fuzz>(),
+        dst_any.downcast_mut::<Fuzz>(),
+    ) {
+        d.set_params(s.gain(), s.tone(), s.level());
+    } else if let (Some(s), Some(d)) = (
+        src_any.downcast_ref::<BiquadFilter>(),
+        dst_any.downcast_mut::<BiquadFilter>(),
+    ) {
+        d.set_type(s.filter_type());
+        d.set_frequency(s.frequency());
+        d.set_q(s.q());
+        d.set_gain_db(s.gain_db());
+    } else if let (Some(s), Some(d)) = (
+        src_any.downcast_ref::<CabinetSim>(),
+        dst_any.downcast_mut::<CabinetSim>(),
+    ) {
+        if d.profile() != s.profile() {
+            d.set_profile(s.profile());
+        }
+        d.set_mix(s.mix());
+        d.set_output_gain_db(s.output_gain_db());
+    } else if let (Some(s), Some(d)) = (
+        src_any.downcast_ref::<StereoDelay>(),
+        dst_any.downcast_mut::<StereoDelay>(),
+    ) {
+        d.set_params(
+            s.delay_ms(),
+            s.feedback(),
+            s.mix(),
+            s.damping(),
+            s.ping_pong(),
+            s.stereo_spread(),
+        );
+    } else if let (Some(s), Some(d)) = (
+        src_any.downcast_ref::<StereoReverb>(),
+        dst_any.downcast_mut::<StereoReverb>(),
+    ) {
+        d.set_params(s.room_size(), s.damping(), s.width(), s.mix());
+    } else if let (Some(s), Some(d)) = (
+        src_any.downcast_ref::<VocalDeEsser>(),
+        dst_any.downcast_mut::<VocalDeEsser>(),
+    ) {
+        d.set_frequency(s.frequency());
+        d.set_threshold_db(s.threshold_db());
+        d.set_ratio(s.ratio());
+        d.set_attack_ms(s.attack_ms());
+        d.set_release_ms(s.release_ms());
+        d.set_mode(s.mode());
+        d.set_listen(s.is_listen());
+    }
 }

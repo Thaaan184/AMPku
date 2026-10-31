@@ -218,7 +218,9 @@ impl CabinetSim {
     pub fn load_custom_ir(&mut self, samples: &[f32]) {
         let mut new_ir = [0.0f32; IR_LENGTH];
         let copy_len = samples.len().min(IR_LENGTH);
-        new_ir[..copy_len].copy_from_slice(&samples[..copy_len]);
+        for (i, &s) in samples.iter().take(copy_len).enumerate() {
+            new_ir[i] = if s.is_finite() { s } else { 0.0 };
+        }
 
         let mut peak = 0.0f32;
         for &s in new_ir.iter() {

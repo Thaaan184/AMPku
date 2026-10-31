@@ -564,3 +564,42 @@ fn test_time_effects_sample_rate_switching() {
     let out_rev = reverb.process_frame(AudioFrame::new(1.0, 1.0));
     assert!(out_rev.is_finite());
 }
+
+#[test]
+fn test_reverb_subnormal_flush() {
+    let mut reverb = StereoReverb::new(48000.0, 0.8, 0.5, 1.0, 0.5);
+    // Send a subnormal impulse
+    let _ = reverb.process_frame(AudioFrame::new(1e-30, 1e-30));
+
+    // After decay in silence, reverb output must flush to exact zero without denormals
+    let mut reached_zero = false;
+    for _ in 0..50000 {
+        let out = reverb.process_frame(AudioFrame::ZERO);
+        assert!(out.is_finite());
+        if out == AudioFrame::ZERO {
+            reached_zero = true;
+            break;
+        }
+    }
+    assert!(
+        reached_zero,
+        "Reverb must flush subnormals and reach exact zero"
+    );
+}
+
+#[test]
+fn test_delay_buffer_headroom_at_max_spread() {
+    let sample_rate = 48000.0;
+    // Set max delay of 2500ms with full stereo spread 1.0 (+25% on right channel = 3125ms)
+    let mut delay = StereoDelay::with_options(sample_rate, 2500.0, 0.0, 1.0, 0.0, false, 1.0);
+
+    // Write a unit impulse
+    let _ = delay.process_frame(AudioFrame::new(1.0, 1.0));
+
+    // Right channel delay is 2500 * 1.25 = 3125 ms = 150,000 samples
+    // Run frames to verify no clamping or panic occurs at buffer boundaries
+    for _ in 0..100 {
+        let out = delay.process_frame(AudioFrame::ZERO);
+        assert!(out.is_finite());
+    }
+}

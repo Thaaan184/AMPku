@@ -303,3 +303,25 @@ fn test_ampku_app_recording_lifecycle() {
     // Cleanup temp directory
     let _ = std::fs::remove_dir_all(&temp_rec_dir);
 }
+
+#[test]
+fn test_ampku_app_decoupled_rendering_audio_thread_non_starvation() {
+    let mut app = AmpkuApp::create();
+    let ctx = egui::Context::default();
+    apply_studio_theme(&ctx);
+
+    let guitar_arc = app.engine.guitar_channel().clone();
+    let mic_arc = app.engine.mic_channel().clone();
+    let master_arc = app.engine.master_bus().clone();
+
+    // Verify engine locks are immediately available
+    let raw_input = egui::RawInput::default();
+    let _ = ctx.run(raw_input, |ctx| {
+        app.render_ui(ctx);
+    });
+
+    // After render pass, engine locks must not be held
+    assert!(guitar_arc.try_lock().is_ok());
+    assert!(mic_arc.try_lock().is_ok());
+    assert!(master_arc.try_lock().is_ok());
+}

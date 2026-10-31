@@ -6,7 +6,9 @@ use std::sync::{Arc, Mutex};
 
 use cpal::traits::{DeviceTrait, StreamTrait};
 
-use crate::audio::clock_drift::{ClockDriftBuffer, SharedClockDriftBuffer};
+use crate::audio::clock_drift::{
+    try_lock_spin, ClockDriftBuffer, SharedClockDriftBuffer, DEFAULT_TRY_LOCK_SPINS,
+};
 use crate::audio::device::{
     default_device, find_device, query_input_devices, query_output_devices, AudioDeviceInfo,
     AudioStreamConfig, DeviceError,
@@ -482,7 +484,7 @@ impl AudioEngine {
                         return;
                     }
                     let frame_count = data.len() / ch;
-                    if let Ok(mut buf) = drift_in.try_lock() {
+                    if let Some(mut buf) = try_lock_spin(&drift_in, DEFAULT_TRY_LOCK_SPINS) {
                         for f in 0..frame_count {
                             let left = data[f * ch];
                             let right = if ch > 1 { data[f * ch + 1] } else { 0.0 };
@@ -521,8 +523,8 @@ impl AudioEngine {
                     let mut mic_frames = [AudioFrame::ZERO; MAX_STACK_FRAMES];
                     let mut master_frames = [AudioFrame::ZERO; MAX_STACK_FRAMES];
 
-                    // 1. Pull frames from drift buffer (non-blocking)
-                    if let Ok(mut db) = drift_out.try_lock() {
+                    // 1. Pull frames from drift buffer (non-blocking with short spin retry loop)
+                    if let Some(mut db) = try_lock_spin(&drift_out, DEFAULT_TRY_LOCK_SPINS) {
                         db.read(&mut in_frames[..count]);
                     }
 
@@ -533,8 +535,8 @@ impl AudioEngine {
                     }
 
                     // 3. Process channels with solo bus state without redundant double locks
-                    let mut guitar_guard = guitar_out.try_lock().ok();
-                    let mut mic_guard = mic_out.try_lock().ok();
+                    let mut guitar_guard = try_lock_spin(&guitar_out, DEFAULT_TRY_LOCK_SPINS);
+                    let mut mic_guard = try_lock_spin(&mic_out, DEFAULT_TRY_LOCK_SPINS);
 
                     let solo_active = guitar_guard.as_ref().map(|g| g.is_solo()).unwrap_or(false)
                         || mic_guard.as_ref().map(|m| m.is_solo()).unwrap_or(false);
@@ -563,7 +565,7 @@ impl AudioEngine {
                     for i in 0..count {
                         master_frames[i] = guitar_frames[i] + mic_frames[i];
                     }
-                    if let Ok(mut mb) = master_out.try_lock() {
+                    if let Some(mut mb) = try_lock_spin(&master_out, DEFAULT_TRY_LOCK_SPINS) {
                         mb.process_block(&mut master_frames[..count]);
                         meters_out.master_peak_left.set(mb.meter().peak_left());
                         meters_out.master_peak_right.set(mb.meter().peak_right());
@@ -647,7 +649,7 @@ impl AudioEngine {
         }
 
         // Write input into drift buffer
-        if let Ok(mut db) = self.drift_buffer.try_lock() {
+        if let Some(mut db) = try_lock_spin(&self.drift_buffer, DEFAULT_TRY_LOCK_SPINS) {
             for &f in &input[..count] {
                 db.write(f);
             }
@@ -655,7 +657,7 @@ impl AudioEngine {
 
         // Pull from drift buffer
         let mut in_frames = vec![AudioFrame::ZERO; count];
-        if let Ok(mut db) = self.drift_buffer.try_lock() {
+        if let Some(mut db) = try_lock_spin(&self.drift_buffer, DEFAULT_TRY_LOCK_SPINS) {
             db.read(&mut in_frames);
         }
 
@@ -669,8 +671,8 @@ impl AudioEngine {
             *f = AudioFrame::from_mono(f.right);
         }
 
-        let mut guitar_guard = self.guitar_channel.try_lock().ok();
-        let mut mic_guard = self.mic_channel.try_lock().ok();
+        let mut guitar_guard = try_lock_spin(&self.guitar_channel, DEFAULT_TRY_LOCK_SPINS);
+        let mut mic_guard = try_lock_spin(&self.mic_channel, DEFAULT_TRY_LOCK_SPINS);
 
         let solo_active = guitar_guard.as_ref().map(|g| g.is_solo()).unwrap_or(false)
             || mic_guard.as_ref().map(|m| m.is_solo()).unwrap_or(false);
@@ -700,7 +702,7 @@ impl AudioEngine {
             sum_frames[i] = guitar_frames[i] + mic_frames[i];
         }
 
-        if let Ok(mut mb) = self.master_bus.try_lock() {
+        if let Some(mut mb) = try_lock_spin(&self.master_bus, DEFAULT_TRY_LOCK_SPINS) {
             mb.process_block(&mut sum_frames);
             self.meters.master_peak_left.set(mb.meter().peak_left());
             self.meters.master_peak_right.set(mb.meter().peak_right());

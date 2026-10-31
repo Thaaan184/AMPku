@@ -321,3 +321,27 @@ fn test_cab_sim_sample_rate_switching() {
     assert!(out.is_finite());
     assert!(out.left != 0.0);
 }
+
+#[test]
+fn test_cab_sim_load_custom_ir_nan_inf_sanitization() {
+    let mut cab = CabinetSim::new(CabinetProfile::CelestionV30);
+    let mut bad_samples = vec![0.5; 512];
+    bad_samples[0] = f32::NAN;
+    bad_samples[1] = f32::INFINITY;
+    bad_samples[2] = f32::NEG_INFINITY;
+    bad_samples[3] = 1.0;
+
+    cab.load_custom_ir(&bad_samples);
+
+    let ir = cab.impulse_response();
+    assert_eq!(ir[0], 0.0);
+    assert_eq!(ir[1], 0.0);
+    assert_eq!(ir[2], 0.0);
+    assert!(ir.iter().all(|s| s.is_finite()));
+
+    // Convolution with sanitized IR must produce finite audio
+    for _ in 0..100 {
+        let out = cab.process_frame(AudioFrame::new(0.5, -0.5));
+        assert!(out.is_finite());
+    }
+}

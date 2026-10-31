@@ -119,7 +119,7 @@ impl StereoDelay {
         } else {
             48000.0
         };
-        let max_ms = delay_ms.max(DEFAULT_MAX_DELAY_MS).max(100.0);
+        let max_ms = (delay_ms.max(DEFAULT_MAX_DELAY_MS) * 1.25).max(100.0);
         let buffer_len = ((max_ms * 0.001 * sr).ceil() as usize).max(1024) + 16;
 
         let mut delay = Self {
@@ -256,7 +256,7 @@ impl StereoDelay {
             && (sample_rate - self.sample_rate).abs() > 1.0
         {
             self.sample_rate = sample_rate;
-            let max_ms = self.delay_ms.max(DEFAULT_MAX_DELAY_MS).max(100.0);
+            let max_ms = (self.delay_ms.max(DEFAULT_MAX_DELAY_MS) * 1.25).max(100.0);
             let new_len = ((max_ms * 0.001 * sample_rate).ceil() as usize).max(1024) + 16;
             self.buffer_left = vec![0.0; new_len];
             self.buffer_right = vec![0.0; new_len];
