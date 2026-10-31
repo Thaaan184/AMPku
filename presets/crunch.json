@@ -1,0 +1,56 @@
+{
+  "name": "Modern Crunch",
+  "description": "Punchy rhythm crunch with mid-forward bite.",
+  "effects": {
+    "amp_sim": {
+      "bass": 0.55,
+      "enabled": true,
+      "gain": 0.7,
+      "mid": 0.7,
+      "treble": 0.55,
+      "voicing": 1
+    },
+    "delay": {
+      "enabled": false,
+      "feedback": 0.3,
+      "mix": 0.2,
+      "time_ms": 300.0
+    },
+    "distortion": {
+      "drive": 0.4,
+      "enabled": false,
+      "level": 0.7,
+      "tone": 0.5
+    },
+    "eq": {
+      "enabled": true,
+      "high_db": 0.5,
+      "low_db": 1.0,
+      "mid_db": 2.5
+    },
+    "input_gain": {
+      "enabled": true,
+      "gain_db": 1.0
+    },
+    "limiter": {
+      "ceiling_db": -0.3,
+      "enabled": true
+    },
+    "noise_gate": {
+      "enabled": true,
+      "threshold_db": -45.0
+    },
+    "overdrive": {
+      "drive": 0.5,
+      "enabled": true,
+      "level": 0.8,
+      "tone": 0.55
+    },
+    "reverb": {
+      "decay": 0.35,
+      "damping": 0.5,
+      "enabled": true,
+      "mix": 0.15
+    }
+  }
+}

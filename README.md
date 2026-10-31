@@ -1,208 +1,182 @@
-# AMPku 🎸🎙️
-> **Zero-Setup, Ultra-Low Latency Standalone Guitar & Vocal DSP Studio for Windows**  
-> *Dibuat khusus untuk musisi yang ingin colok gitar langsung ke soundcard USB (Vention, dll) tanpa ribet install ASIO4ALL atau buka DAW berat.*
+# GuitarFX 🎸
+
+> **Lightweight Real-Time Terminal Guitar Effects Engine for Windows**  
+> Pemroses efek gitar digital mandiri berbasis C++20 dan WASAPI. Tanpa DAW, tanpa VST eksternal, dan tanpa GUI berat.
 
 ---
 
-## ⚡ Kenapa AMPku? (The Why)
-Main gitar listrik colok soundcard USB di Windows seringkali menyebalkan:
-- **DAW terlalu berat & lambat**: Membuka FL Studio, Ableton, atau Reaper cuma buat latihan 15 menit terasa berlebihan.
-- **ASIO4ALL bikin pusing**: Sering conflict dengan browser YouTube/Spotify, setting buffer membingungkan, dan sering bisu (audio drop).
-- **Direct Monitoring soundcard suaranya mentah**: Soundcard budget (seperti Vention) hanya punya direct monitor sinyal *dry* (suara senar mentah tanpa distorsi/amp simulator).
+## 1. Konsep & Alur Kerja
 
-**AMPku** memotong semua keribetan itu:
-1. **Satu File Executable Ringan (< 15 MB)**: Langsung klik, langsung jalan tanpa installer.
-2. **WASAPI Exclusive Low Latency**: Langsung akses hardware audio Windows dengan buffer 64 sample (~1.3 ms) tanpa perlu driver pihak ketiga.
-3. **Dual Input Independen**: Channel 1 untuk Gitar, Channel 2 untuk Mic Vokal (masing-masing punya rantai efek terpisah).
-4. **Modular DSP Rack**: Bebas tambah, hapus, bypass, dan atur urutan efek (Overdrive, Cab Sim, Delay, Reverb, Compressor, Gate, EQ).
-5. **Direct WAV Recorder**: Rekam jamming atau ide lagu dalam format 24-bit PCM WAV lossless dengan satu tombol klik.
-
----
-
-## 🚀 Quick Start (Pengguna Siap Pakai)
-1. Colok soundcard USB kamu (misal Vention) ke PC Windows 10/11.
-2. Colok kabel gitar ke Input 1 (Left), dan mic ke Input 2 (Right).
-3. Jalankan `AMPku.exe`.
-4. Pada bar atas, pilih:
-   - **Input Device**: *Vention USB Audio*
-   - **Output Device**: *Speakers / Headphone (Realtek / USB)*
-   - **Buffer**: *64 samples* (untuk latensi terendah) atau *128 samples*.
-5. Pilih preset favorit (misal: `Texas Blues Crunch` atau `Clean Ambient`) dan mulai main!
-
----
-
-## 🛠️ Panduan Developer: Mengambil & Membangun Source Code
-
-### 1. Prasyarat Sistem
-- **Sistem Operasi**: Windows 10/11 (atau cross-compile dari Linux dengan MinGW).
-- **Rust Toolchain**: Rust versi stabil 1.75+ (install via [rustup.rs](https://rustup.rs/)).
-- **Git**: Untuk cloning repository.
-
-### 2. Clone Repository
-```bash
-git clone https://github.com/Thaaan184/AMPku.git
-cd AMPku
-```
-
-### 3. Kompilasi & Menjalankan (Development Mode)
-```bash
-# Menjalankan langsung dengan live reload / debugger
-cargo run
-```
-
-### 4. Membangun Binary Standalone Release (Production)
-```bash
-# Kompilasi binary teroptimasi maksimal (LTO + strip)
-cargo build --release
-```
-File executable mandiri siap pakai akan berada di:
-`target/release/AMPku.exe` (ukuran di bawah 15 MB, bebas dependensi eksternal).
-
----
-
-## 🧠 Arsitektur Sistem & Cara Kerjanya
-
-AMPku dibangun dengan arsitektur **Dual-Thread Zero-Lock**:
+GuitarFX dirancang khusus untuk musisi yang ingin colok gitar listrik langsung ke PC dengan latensi rendah, memproses efek digital buatan sendiri, dan mendistribusikan audio secara bersih ke headphone, Discord, atau recording melalui **VoiceMeeter Banana**.
 
 ```
-[ GUI Thread (egui / 60 FPS) ]
-       │  ▲
-       │  │ (Lock-free Ring Buffer / Atomics)
-       ▼  │
-[ Audio Callback Thread (cpal / WASAPI Exclusive) ]
+[ Gitar Elektrik ]
        │
-       ├── Channel 1: Input Gitar ──> [ Modular DSP Chain Gitar ] ──┐
-       │                                                            ├──> [ Master Sum & Limiter ] ──> Output Speaker
-       └── Channel 2: Input Mic   ──> [ Modular DSP Chain Mic ]   ──┘                 │
-                                                                                      └──> [ WAV Recorder (hound) ]
-```
-
-### Aturan Emas Audio Thread (Safety Real-Time):
-Audio thread berjalan pada prioritas realtime OS. Di dalam audio callback:
-- **DILARANG Malloc/Heap Allocation**: Tidak boleh ada `Vec::push` atau alokasi memori dinamis di dalam loop sampel audio.
-- **DILARANG Mutex / Blocking Locks**: Komunikasi parameter UI ke DSP menggunakan atomics (`AtomicF32`) atau SPSC ring buffer (`rtrb`).
-- **DILARANG Blocking I/O**: Penulisan file rekaman WAV dilempar ke background worker thread via ring buffer terpisah.
-
----
-
-## 🎛️ Cara Mengubah & Menambah Efek Baru (Custom DSP)
-
-Semua efek di AMPku menerapkan trait tunggal `AudioEffect` yang berada di `src/dsp/traits.rs`. Kamu bisa menambahkan efek ciptaanmu sendiri dengan mudah:
-
-### Contoh: Membuat Efek Distortion Baru
-Buat file baru di `src/dsp/saturation/my_distortion.rs`:
-
-```rust
-use crate::dsp::traits::AudioEffect;
-
-pub struct HardClipDistortion {
-    pub gain: f32,       // 1.0 sampai 20.0
-    pub threshold: f32,  // 0.1 sampai 1.0
-    pub bypass: bool,
-}
-
-impl AudioEffect for HardClipDistortion {
-    fn name(&self) -> &'static str {
-        "My Custom Distortion"
-    }
-
-    fn process_sample(&mut self, input: f32) -> f32 {
-        if self.bypass {
-            return input;
-        }
-
-        // 1. Dorong sinyal dengan gain
-        let driven = input * self.gain;
-
-        // 2. Potong keras (hard clipping)
-        driven.clamp(-self.threshold, self.threshold)
-    }
-
-    fn set_parameter(&mut self, id: u32, value: f32) {
-        match id {
-            0 => self.gain = value,
-            1 => self.threshold = value,
-            _ => {}
-        }
-    }
-
-    fn get_parameter(&self, id: u32) -> f32 {
-        match id {
-            0 => self.gain,
-            1 => self.threshold,
-            _ => 0.0,
-        }
-    }
-
-    fn is_bypassed(&self) -> bool {
-        self.bypass
-    }
-
-    fn set_bypass(&mut self, bypass: bool) {
-        self.bypass = bypass;
-    }
-
-    fn reset(&mut self) {}
-}
-```
-
-Setelah itu daftarkan modul efek kamu di catalog `src/dsp/mod.rs` dan UI selector di `src/gui/effect_card.rs`.
-
----
-
-## 📁 Struktur Folder Project
-
-```
-AMPku/
-├── Cargo.toml                  # Konfigurasi dependensi Rust & profil rilis
-├── README.md                   # Dokumentasi lengkap produk & developer guide
-├── CHANGELOG.md                # Catatan rilis minor & major
-├── docs/
-│   └── superpowers/specs/      # Dokumen arsitektur teknis mendalam
-├── src/
-│   ├── main.rs                 # Entry point aplikasi & startup window
-│   ├── audio/                  # Engine audio cpal, WASAPI routing, recorder
-│   │   ├── engine.rs           # Inisialisasi stream & buffer callback
-│   │   ├── ring_buffer.rs      # SPSC ring buffer lock-free
-│   │   └── recorder.rs         # Background WAV file writer (hound)
-│   ├── dsp/                    # Kumpulan algoritma efek audio
-│   │   ├── traits.rs           # Trait AudioEffect
-│   │   ├── chain.rs            # Modular node execution pipeline
-│   │   ├── dynamics/           # Noise gate, sustainer compressor
-│   │   ├── saturation/         # Overdrive, distortion, fuzz, booster
-│   │   ├── filters/            # Biquad EQ, high-pass filter
-│   │   ├── time/               # Delay, reverb
-│   │   └── cab_sim/            # FIR Cabinet Impulse Response convolution
-│   ├── gui/                    # Antarmuka grafis desktop (egui)
-│   │   ├── app.rs              # Root application view
-│   │   ├── channel_strip.rs    # Kolom mixer Gitar & Mic
-│   │   ├── effect_card.rs      # Tampilan modular card untuk efek
-│   │   └── meter.rs            # Widget VU meter stereo & desibel
-│   └── presets/                # Sistem preset JSON
-│       ├── manager.rs          # Serializer & deserializer
-│       └── defaults.rs         # Preset bawaan pabrik (blues, lead, clean)
+       ▼
+[ Vention USB Sound Card / Input Device ]
+       │
+       ▼
+[ GuitarFX (Terminal Engine) ]
+   ├── 01. Input Gain
+   ├── 02. Noise Gate
+   ├── 03. Overdrive
+   ├── 04. Distortion
+   ├── 05. Amp Simulator (Clean / Crunch / Lead)
+   ├── 06. 3-Band EQ
+   ├── 07. Stereo Delay
+   ├── 08. Algorithmic Reverb
+   └── 09. Output Brickwall Limiter
+       │
+       ▼ (Stereo Output)
+[ VoiceMeeter AUX Input ]
+       │
+       ├── A1 ──> Headphone (Monitoring langsung tanpa latency)
+       └── B1 ──> Discord / OBS / Voice Chat
 ```
 
 ---
 
-## 📄 Format Preset (JSON)
-Setiap preset disimpan dalam file JSON manusiawi yang mudah diedit:
-```json
-{
-  "name": "Texas Blues",
-  "guitar_channel": {
-    "volume": 0.9,
-    "effects": [
-      { "type": "NoiseGate", "threshold_db": -52.0, "bypass": false },
-      { "type": "Overdrive", "drive": 0.65, "tone": 0.55, "level": 0.8, "bypass": false },
-      { "type": "CabSimIR", "profile": "Vintage_Fender_1x12", "bypass": false },
-      { "type": "Reverb", "decay": 1.8, "mix": 0.25, "bypass": false }
-    ]
-  }
-}
+## 2. Download & Cara Pakai (Siap Jalan)
+
+### Opsi A: Langsung Jalankan (.exe Portable)
+1. Unduh **[GuitarFX-v0.1.0-windows-x86_64.zip](https://github.com/Thaaan184/AMPku/releases/download/v0.1.0/GuitarFX-v0.1.0-windows-x86_64.zip)** atau file **`guitarfx.exe`**.
+2. Ekstrak file zip ke folder mana saja di komputer kamu.
+3. Jalankan **`guitarfx.exe`** (atau double-click **`run.bat`**).
+4. Terminal interaktif langsung terbuka di Command Prompt / Windows Terminal.
+
+---
+
+## 3. Panduan Setup Audio & VoiceMeeter Banana
+
+GuitarFX dirancang fleksibel untuk routing capture dan playback:
+
+### A. Konfigurasi Input Device
+Tekan tombol **`D`** di terminal untuk membuka menu audio device:
+- **Pilihan 1 (Rekomendasi Direct)**: Pilih **`Vention USB Audio`** (atau nama soundcard USB kamu).
+- **Pilihan 2 (VoiceMeeter In)**: Jika gitar kamu sudah masuk ke strip VoiceMeeter dan di-route ke bus B1/B2, pilih **`VoiceMeeter Out B1`** atau **`VoiceMeeter Out B2`**.
+
+### B. Konfigurasi Output Device
+- Pada daftar Playback Device, pilih **`VoiceMeeter AUX Input`** (atau **`Voicemeeter Aux VAIO`**).
+- Tekan **`Apply Selected Devices`**.
+
+### C. Pengaturan di VoiceMeeter Banana
+1. Pada strip virtual **`VOICEMEETER AUX`**:
+   - Aktifkan **`A1`**: Agar suara gitar basah (dengan distorsi/efek) terdengar di headphone kamu.
+   - Aktifkan **`B1`**: Agar suara gitar masuk ke mic Discord, Zoom, atau aplikasi streaming.
+2. **PENTING (Mencegah Double Audio / Echo)**:
+   - Jangan aktifkan monitoring hardware (A1) pada input fisik gitar di VoiceMeeter. Biarkan hanya strip **AUX** yang menyalakan A1. Ini mencegah suara senar mentah (dry) bertumpuk dengan suara efek (wet).
+
+---
+
+## 4. Tampilan & Navigasi Terminal (FTXUI)
+
+Saat aplikasi berjalan, layar terminal menampilkan mixer studio digital:
+
 ```
+========================================================
+                   GUITARFX ENGINE                      
+========================================================
+ STATUS : RUNNING                 CPU : 1.8%
+ INPUT  : Vention USB Audio       48000 Hz / MONO
+ OUTPUT : VoiceMeeter AUX Input   48000 Hz / STEREO
+ BUFFER : 256 FRAMES (~10 ms)     XRUNS : 0   PRESET : crunch
+--------------------------------------------------------
+ INPUT LEVEL  [########--------] -14 dB
+ OUTPUT LEVEL [##########------] -8 dB
+--------------------------------------------------------
+ EFFECT CHAIN
+--------------------------------------------------------
+ [ON]  01. Input Gain              +1.0 dB
+ [ON]  02. Noise Gate              -45 dB
+ [ON]  03. Overdrive               Drive: 50%
+ [OFF] 04. Distortion              Drive: 40%
+ [ON]  05. Amp Simulator           CRUNCH
+ [ON]  06. Equalizer               L:1 M:2 H:0
+ [OFF] 07. Delay                   300 ms
+ [ON]  08. Reverb                  15%
+ [ON]  09. Output Limiter          -0.3 dBFS
+--------------------------------------------------------
+ [D] Devices  [E] Effects  [P] Presets  [B] Bypass  [M] Mute  [Q] Quit
+========================================================
+```
+
+### Tombol Navigasi:
+| Tombol | Fungsi |
+|---|---|
+| **D** | Buka / tutup menu pemilihan audio input & output device |
+| **E** | Buka menu daftar efek untuk toggle bypass per-efek |
+| **P** | Buka daftar preset untuk memuat tone gitar |
+| **Space** | Toggle `[ON]` / `[OFF]` efek yang sedang dipilih di menu Effects |
+| **B** | Global bypass (matikan semua efek, suara clean mentah) |
+| **M** | Mute audio output seketika |
+| **Esc** | Kembali ke tampilan utama Dashboard |
+| **Q** | Keluar dari aplikasi dengan aman |
+
+---
+
+## 5. Rantai Efek DSP (Modular C++20)
+
+Seluruh algoritma efek ditulis langsung menggunakan C++20 tanpa VST pihak ketiga:
+
+1. **Input Gain**: Kontrol penguatan sinyal awal (-24 dB s/d +24 dB) dengan parameter smoothing.
+2. **Noise Gate**: Menghilangkan dengung desis pickup single-coil dengan threshold desibel dan histeresis 2 dB.
+3. **Overdrive**: Saturasi soft-clipping berbasis non-linear hyperbolic tangent (`tanh`) dan filter tone.
+4. **Distortion**: Asymmetric diode clipping (model 1N4148) dengan filter pre-emphasis 720 Hz untuk karakter rock/metal modern.
+5. **Amp Simulator**: Pemodelan tabung preamp dengan 3 voicing (**Clean**, **Crunch**, **Lead**), tone stack 3-band, dan filter kabinet speaker 4.8 kHz.
+6. **Equalizer**: Filter biquad Direct Form II Transposed untuk Low Shelf (120 Hz), Peaking Mid (1 kHz, Q=1.2), dan High Shelf (3.5 kHz).
+7. **Delay**: Digital delay stereo ping-pong dengan feedback damping analog dan stereo spread.
+8. **Reverb**: Algoritma Freeverb/Schroeder (8 comb filters paralel + 4 allpass filters seri per kanal) dengan decay luas.
+9. **Output Limiter**: Lookahead soft-knee brickwall peak limiter pada ceiling -0.3 dBFS untuk mencegah digital clipping pada output VoiceMeeter.
+
+---
+
+## 6. Preset Bawaan (Format JSON)
+
+Preset tersimpan otomatis di folder `presets/*.json`:
+- **`clean.json`**: Nada clean jernih, bright EQ, dan reverb hangat.
+- **`blues.json`**: Overdrive hangat, voicing tube crunch, dan slapback delay pendek.
+- **`crunch.json`**: Rhythm crunch berbobot dengan dorongan mid-range.
+- **`rock.json`**: Distorsi high-gain, amp lead, noise gate aktif, dan stereo delay.
+- **`ambient.json`**: Clean tone dengan delay panjang 480ms dan cathedral reverb lebar.
+
+---
+
+## 7. Command Line Flags
+
+GuitarFX juga bisa dijalankan dengan opsi command line:
+```bash
+# Cek semua audio input & output yang terdeteksi Windows:
+guitarfx.exe --list-devices
+
+# Menampilkan versi software:
+guitarfx.exe --version
+
+# Menampilkan bantuan penggunaan:
+guitarfx.exe --help
+```
+
+---
+
+## 8. Kompilasi dari Source Code
+
+### Prasyarat:
+- C++20 compliant compiler (MSVC Visual Studio 2022 / Clang / GCC MinGW).
+- CMake 3.20+.
+
+### Langkah Build di Windows:
+```cmd
+# 1. Generate project build
+cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+# 2. Compile binary release
+cmake --build build --config Release -j4
+
+# Executable siap pakai akan berada di build/Release/guitarfx.exe
+```
+
+Atau cukup jalankan script otomatis **`build.bat`**.
 
 ---
 
 ## 📜 Lisensi
-MIT License - Bebas digunakan, dimodifikasi, dan didistribusikan kembali.
+MIT License - Bebas digunakan dan dimodifikasi untuk kebutuhan musisi dan developer.

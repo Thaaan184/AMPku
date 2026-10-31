@@ -1,0 +1,7 @@
+build/
+build-win/
+*.exe
+*.zip
+*.log
+.superpowers/
+compile_commands.json

@@ -1,26 +1,40 @@
-# Changelog - AMPku
+# Changelog - GuitarFX
 
-Semua perubahan penting, minor, dan major dari proyek AMPku dicatat secara teratur di dokumen ini.
+Semua perubahan penting dari proyek GuitarFX dicatat secara teratur di dokumen ini.
 Format penomoran versi mengikuti [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
-## [Unreleased] - 2026-10-30
+## [0.1.0] - 2026-10-31
 
-### Initial Architectural Design & Foundation (Milestone 1)
-- **Specification**:
-  - Diterbitkan spesifikasi desain arsitektur `docs/superpowers/specs/2026-10-30-ampku-design.md`.
-  - Penetapan target arsitektur: Dual-thread zero-lock audio engine (Rust `cpal` WASAPI Exclusive + `egui` native GUI).
-- **Core Features Designed**:
-  - **Dual Input Processing**: Input Channel 1 (Gitar) & Channel 2 (Mic) independen.
-  - **Modular DSP Chain**: Serial node graph dengan trait `AudioEffect` yang dapat ditambah, dihapus, dan di-bypass secara dinamis.
-  - **Comprehensive Effect Suite**:
-    - Dynamics: Noise Gate, Sustainer Compressor.
-    - Saturation: Overdrive (soft-clip), Distortion (hard-clip), Fuzz.
-    - Cabinet IR: FIR Convolution untuk speaker box (Celestion V30, Fender 1x12).
-    - Time-Based: Echo Delay, Room/Hall/Shimmer Reverb.
-    - Vocal Suite: 80Hz High-Pass Filter, Vocal Gate, De-Esser, Vocal Comp.
-  - **Direct Lossless Recorder**: Background writer thread 24-bit 48 kHz WAV via crate `hound`.
-  - **Preset Engine**: Serialisasi state ke JSON manusiawi (`presets/manager.rs`).
-- **Documentation**:
-  - `README.md` mendalam dengan panduan clone, build standalone release, arsitektur internal, dan tutorial membuat modul DSP efek baru.
+### Arsitektur Baru: C++20 Lightweight Terminal Audio Engine
+- **Mesin Audio (miniaudio + WASAPI)**:
+  - Mengganti arsitektur GUI berat dengan C++20 terminal engine interaktif (`FTXUI`).
+  - Audio backend WASAPI via single-header `miniaudio.h` dengan latency ~10 ms (buffer 256 samples @ 48 kHz).
+  - Mode duplex audio capture & playback dengan fallback silence saat underrun.
+  - Enumerasi device dinamis via `AudioDeviceManager`.
+- **Integrasi VoiceMeeter Banana**:
+  - Dukungan fleksibel untuk input langsung dari Vention USB Sound Card atau bus VoiceMeeter Virtual Out (B1 / B2).
+  - Output langsung terarah ke VoiceMeeter AUX Input (`Voicemeeter Aux VAIO`) untuk distribusi ke headphone A1 dan Discord/recording B1.
+- **9 Efek DSP Kustom Mandiri (Zero VST / Zero External Dependency)**:
+  - Input Gain (penguatan sinyal dengan smoothing parameter).
+  - Noise Gate (threshold dB dengan 2 dB histeresis anti-chattering).
+  - Overdrive (soft clipping `tanh` + tone lowpass filter).
+  - Distortion (asymmetric diode clipping 1N4148 + 720 Hz pre-emphasis).
+  - Amp Simulator (3 voicing Clean/Crunch/Lead + tone stack 3-band + 4.8 kHz cabinet filter).
+  - Equalizer (Direct Form II Transposed biquad filters: Low Shelf, Peaking Mid, High Shelf).
+  - Delay (stereo ping-pong delay line dengan feedback damping).
+  - Reverb (Freeverb/Schroeder algorithmic reverb: 8 comb + 4 allpass per kanal).
+  - Output Limiter (soft-knee lookahead brickwall peak limiter pada ceiling -0.3 dBFS).
+- **Terminal UI Interaktif (FTXUI)**:
+  - Layar Dashboard studio dengan meteran VU bar real-time, estimasi latensi, CPU, dan status XRUN.
+  - Menu pemilihan audio input/output device interaktif (`[D]`).
+  - Menu kontrol efek dan toggle `[ON]` / `[OFF]` (`[E]`, `Space`).
+  - Menu preset tone gitar (`[P]`).
+  - Hotkey bypass global (`[B]`) dan mute (`[M]`).
+- **Sistem Preset JSON**:
+  - 5 preset bawaan pabrik: `clean.json`, `blues.json`, `crunch.json`, `rock.json`, `ambient.json`.
+- **Packaging & Build**:
+  - Konfigurasi CMake 3.20+ terpadu dengan FetchContent FTXUI.
+  - Script build Windows otomatis: `run.bat` dan `build.bat`.
+  - Binary portable tunggal Windows x64 (`guitarfx.exe`, 1.7 MB).

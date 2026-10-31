@@ -1,0 +1,56 @@
+{
+  "name": "High-Gain Lead",
+  "description": "Aggressive diode distortion, high-gain amp voicing, and tight noise gate.",
+  "effects": {
+    "amp_sim": {
+      "bass": 0.6,
+      "enabled": true,
+      "gain": 0.85,
+      "mid": 0.5,
+      "treble": 0.65,
+      "voicing": 2
+    },
+    "delay": {
+      "enabled": true,
+      "feedback": 0.35,
+      "mix": 0.25,
+      "time_ms": 380.0
+    },
+    "distortion": {
+      "drive": 0.65,
+      "enabled": true,
+      "level": 0.75,
+      "tone": 0.6
+    },
+    "eq": {
+      "enabled": true,
+      "high_db": 2.0,
+      "low_db": 3.0,
+      "mid_db": -1.0
+    },
+    "input_gain": {
+      "enabled": true,
+      "gain_db": 3.0
+    },
+    "limiter": {
+      "ceiling_db": -0.3,
+      "enabled": true
+    },
+    "noise_gate": {
+      "enabled": true,
+      "threshold_db": -42.0
+    },
+    "overdrive": {
+      "drive": 0.3,
+      "enabled": false,
+      "level": 0.8,
+      "tone": 0.5
+    },
+    "reverb": {
+      "decay": 0.5,
+      "damping": 0.4,
+      "enabled": true,
+      "mix": 0.25
+    }
+  }
+}
