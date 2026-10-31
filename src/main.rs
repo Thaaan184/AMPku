@@ -1,4 +1,5 @@
 //! AMPku - Standalone Low-Latency Guitar & Vocal DSP Studio application entrypoint.
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use ampku::gui::app::AmpkuApp;
 
