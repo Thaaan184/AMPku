@@ -8,7 +8,7 @@ use crate::core::frame::AudioFrame;
 /// - Zero heap allocations (`malloc`/`free`) during processing.
 /// - Zero system calls and zero blocking locks.
 /// - Robust NaN and Inf handling.
-pub trait AudioEffect: Send {
+pub trait AudioEffect: Send + 'static {
     /// Process a single stereo audio frame.
     fn process_frame(&mut self, frame: AudioFrame) -> AudioFrame;
 
@@ -35,4 +35,10 @@ pub trait AudioEffect: Send {
 
     /// Enable or bypass the effect node.
     fn set_enabled(&mut self, _enabled: bool) {}
+
+    /// Return reference as `&dyn std::any::Any` for dynamic inspection and GUI downcasting.
+    fn as_any(&self) -> &dyn std::any::Any;
+
+    /// Return mutable reference as `&mut dyn std::any::Any` for dynamic inspection and GUI downcasting.
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any;
 }

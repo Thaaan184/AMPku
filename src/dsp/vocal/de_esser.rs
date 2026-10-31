@@ -512,4 +512,14 @@ impl AudioEffect for VocalDeEsser {
     fn set_enabled(&mut self, enabled: bool) {
         self.enabled = enabled;
     }
+
+    #[inline]
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    #[inline]
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
 }
