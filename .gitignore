@@ -1,5 +1,6 @@
 /target
 *.wav
 .superpowers/
-.cargo/
+.cargo/*
+!.cargo/config.toml
 # Cargo.lock (for libraries, keep tracked for binaries)

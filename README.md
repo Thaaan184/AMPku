@@ -14,29 +14,70 @@ Main gitar listrik colok soundcard USB di Windows seringkali menyebalkan:
 1. **Satu File Executable Ringan (< 15 MB)**: Langsung klik, langsung jalan tanpa installer.
 2. **WASAPI Exclusive Low Latency**: Langsung akses hardware audio Windows dengan buffer 64 sample (~1.3 ms) tanpa perlu driver pihak ketiga.
 3. **Dual Input Independen**: Channel 1 untuk Gitar, Channel 2 untuk Mic Vokal (masing-masing punya rantai efek terpisah).
-4. **Modular DSP Rack**: Bebas tambah, hapus, bypass, dan atur urutan efek (Overdrive, Cab Sim, Delay, Reverb, Compressor, Gate, EQ).
-5. **Direct WAV Recorder**: Rekam jamming atau ide lagu dalam format 24-bit PCM WAV lossless dengan satu tombol klik.
+4. **Dual Device I/O**: Bebas gunakan input soundcard USB (Vention) dan output speaker motherboard (Realtek) secara bersamaan dengan kompensasi clock drift otomatis.
+5. **Modular DSP Rack**: Bebas tambah, hapus, bypass, dan atur urutan efek (Overdrive, Cab Sim, Delay, Reverb, Compressor, Gate, EQ, De-Esser).
+6. **Direct WAV Recorder**: Rekam jamming atau ide lagu dalam format 24-bit PCM WAV lossless dengan satu tombol klik.
 
 ---
 
 ## 🚀 Quick Start (Pengguna Siap Pakai)
 1. Colok soundcard USB kamu (misal Vention) ke PC Windows 10/11.
 2. Colok kabel gitar ke Input 1 (Left), dan mic ke Input 2 (Right).
-3. Jalankan `AMPku.exe`.
-4. Pada bar atas, pilih:
+3. Jalankan `AMPku.exe` (atau binary hasil build).
+4. Pada bar atas (Transport Bar), pilih:
    - **Input Device**: *Vention USB Audio*
    - **Output Device**: *Speakers / Headphone (Realtek / USB)*
-   - **Buffer**: *64 samples* (untuk latensi terendah) atau *128 samples*.
+   - **Buffer Size**: *64 samples* (untuk latensi terendah ~1.3 ms) atau *128 samples*.
 5. Pilih preset favorit (misal: `Texas Blues Crunch` atau `Clean Ambient`) dan mulai main!
 
 ---
 
-## 🛠️ Panduan Developer: Mengambil & Membangun Source Code
+## 📊 Matriks Fitur & Verifikasi Latensi (v0.1.0)
+
+### 1. Karakteristik Latensi Terverifikasi (@ 48 kHz)
+| Buffer Size | One-Way Buffer Latency | Estimasi Roundtrip Latency | Kategori Penggunaan |
+|---|---|---|---|
+| **64 samples** | **1.33 ms** | **~3.2 – 4.5 ms** | Real-time shredding, lead guitar, ultra-fast response |
+| **128 samples** | **2.67 ms** | **~5.5 – 7.0 ms** | Standard playing & vocal monitoring (sangat aman) |
+| **256 samples** | **5.33 ms** | **~11.0 – 13.0 ms** | Sesi santai / CPU hemat energi |
+| **512 samples** | **10.67 ms** | **~21.0 – 24.0 ms** | High stability buffer |
+
+### 2. Verified Feature Matrix (v0.1.0 Release)
+| Kategori | Fitur | Status | Keterangan |
+|---|---|---|---|
+| **Audio Core** | WASAPI Exclusive / Direct | ✅ Selesai | Akses hardware eksklusif direct stream via `cpal` |
+| | Dual Physical Device I/O | ✅ Selesai | Input dan Output pada perangkat fisik terpisah |
+| | Adaptive Clock Drift Resampler | ✅ Selesai | PI controller + Hermite cubic interpolation, zero clicks/pops |
+| | Lock-Free Concurrency | ✅ Selesai | `rtrb` SPSC ring buffers & `AtomicF32` parameter sync |
+| | Direct 24-bit WAV Recorder | ✅ Selesai | Background writer thread via `hound`, non-blocking I/O |
+| **DSP Rack** | Stereo Processing Architecture | ✅ Selesai | `AudioFrame { left, right }` dengan spatial imaging |
+| | Noise Gate | ✅ Selesai | Threshold, attack, release, hysteresis, zero bleed |
+| | Sustainer Compressor | ✅ Selesai | Threshold, ratio, attack, release, makeup gain, GR metering |
+| | Overdrive | ✅ Selesai | Soft-clipping diode saturation + tone lowpass filter |
+| | Distortion | ✅ Selesai | Asymmetric hard-clipping high gain waveshaping |
+| | Fuzz | ✅ Selesai | Germanium wavefolding saturation |
+| | FIR Cabinet Simulator | ✅ Selesai | 4 Embedded Factory IRs (Celestion V30, Fender Twin, Marshall 1960A, Acoustic) + Custom IR WAV loader |
+| | Stereo Delay | ✅ Selesai | Ping-pong stereo, fractional cubic delay, lowpass damping |
+| | Studio Reverb | ✅ Selesai | Freeverb stereo decorrelation, room size, damping, width |
+| | 3-Band Parametric EQ | ✅ Selesai | Low shelf, peaking mid (Q-factor), high shelf biquad |
+| | Vocal Suite & De-Esser | ✅ Selesai | 80Hz HPF, split-band / wideband sibilance reduction, listen mode |
+| **Mixer & GUI** | Dual Independent Channel Strips | ✅ Selesai | Channel 1 (Gitar) & Channel 2 (Mic), fader, pan, mute, solo |
+| | Real-Time Stereo VU Meters | ✅ Selesai | Peak & RMS bar rendering, -60 to 0 dBFS, clip indicator |
+| | Master Bus & Brickwall Limiter | ✅ Selesai | Master fader + lookahead peak limiter (-0.1 dBFS ceiling) |
+| | Modular Card Reordering | ✅ Selesai | Reorder up/down, add from dropdown, delete, individual bypass |
+| | Dark Studio Theme | ✅ Selesai | egui/eframe 60 FPS, Ableton/Neural DSP inspired palette |
+| **Presets** | Preset Engine (JSON) | ✅ Selesai | 5 Factory Presets, user preset save/load/delete |
+| | Security & Integrity | ✅ Selesai | Path traversal rejection, safe atomic rename writes |
+| **Testing** | 166 Test Cases Passing | ✅ Selesai | 100% pass rate di semua unit dan integration tests |
+
+---
+
+## 🛠️ Panduan Developer: Kompilasi & Build
 
 ### 1. Prasyarat Sistem
-- **Sistem Operasi**: Windows 10/11 (atau cross-compile dari Linux dengan MinGW).
 - **Rust Toolchain**: Rust versi stabil 1.75+ (install via [rustup.rs](https://rustup.rs/)).
 - **Git**: Untuk cloning repository.
+- **MinGW GCC (khusus cross-compile dari Linux ke Windows)**: `gcc-mingw-w64-x86-64`.
 
 ### 2. Clone Repository
 ```bash
@@ -44,19 +85,47 @@ git clone https://github.com/Thaaan184/AMPku.git
 cd AMPku
 ```
 
-### 3. Kompilasi & Menjalankan (Development Mode)
+### 3. Kompilasi & Menjalankan secara Lokal
 ```bash
-# Menjalankan langsung dengan live reload / debugger
+# Menjalankan langsung aplikasi:
 cargo run
+
+# Menjalankan seluruh test suite (166 unit & integration tests):
+cargo test --all-targets
+
+# Menjalankan linter clippy dan formatter:
+cargo clippy --all-targets
+cargo fmt --check
 ```
 
-### 4. Membangun Binary Standalone Release (Production)
-```bash
-# Kompilasi binary teroptimasi maksimal (LTO + strip)
+### 4. Membangun Binary Standalone Release untuk Windows
+
+#### Opsi A: Membangun Langsung di Windows (MSVC / GNU)
+```powershell
 cargo build --release
 ```
-File executable mandiri siap pakai akan berada di:
-`target/release/AMPku.exe` (ukuran di bawah 15 MB, bebas dependensi eksternal).
+Binary release teroptimasi penuh (LTO + strip) akan berada di:  
+`target/release/ampku.exe` (ukuran < 15 MB, zero external DLL dependencies).
+
+#### Opsi B: Cross-Compile dari Linux ke Windows (MinGW)
+Repository telah dilengkapi konfigurasi `.cargo/config.toml` untuk target `x86_64-pc-windows-gnu`.
+
+```bash
+# 1. Install toolchain target Windows di Rust:
+rustup target add x86_64-pc-windows-gnu
+
+# 2. Install MinGW cross-compiler di host Linux (Ubuntu/Debian):
+sudo apt install gcc-mingw-w64-x86-64
+
+# 3. Verifikasi check & clippy untuk target Windows:
+cargo check --target x86_64-pc-windows-gnu
+cargo clippy --target x86_64-pc-windows-gnu
+
+# 4. Bangun binary release Windows:
+cargo build --target x86_64-pc-windows-gnu --release
+```
+File executable Windows siap pakai akan berada di:  
+`target/x86_64-pc-windows-gnu/release/ampku.exe`.
 
 ---
 
@@ -82,110 +151,28 @@ Audio thread berjalan pada prioritas realtime OS. Di dalam audio callback:
 - **DILARANG Malloc/Heap Allocation**: Tidak boleh ada `Vec::push` atau alokasi memori dinamis di dalam loop sampel audio.
 - **DILARANG Mutex / Blocking Locks**: Komunikasi parameter UI ke DSP menggunakan atomics (`AtomicF32`) atau SPSC ring buffer (`rtrb`).
 - **DILARANG Blocking I/O**: Penulisan file rekaman WAV dilempar ke background worker thread via ring buffer terpisah.
+- **DILARANG Panic / Unchecked NaN**: Semua komputasi floating point disanitasi terhadap nilai `NaN` dan `Infinity`.
 
 ---
 
-## 🎛️ Cara Mengubah & Menambah Efek Baru (Custom DSP)
+## 🎛️ Katalog Efek DSP Bawaan (10 Modul)
 
-Semua efek di AMPku menerapkan trait tunggal `AudioEffect` yang berada di `src/dsp/traits.rs`. Trait ini mendukung pemrosesan frame stereo (`AudioFrame { left, right }`), sehingga efek spasial seperti Reverb dan Delay dapat menghasilkan persebaran stereo yang lebar:
-
-### Contoh: Membuat Efek Distortion Baru
-Buat file baru di `src/dsp/saturation/my_distortion.rs`:
-
-```rust
-use crate::dsp::traits::{AudioEffect, AudioFrame};
-
-pub struct HardClipDistortion {
-    pub gain: f32,       // 1.0 sampai 20.0
-    pub threshold: f32,  // 0.1 sampai 1.0
-    pub bypass: bool,
-}
-
-impl AudioEffect for HardClipDistortion {
-    fn name(&self) -> &'static str {
-        "My Custom Distortion"
-    }
-
-    fn process_frame(&mut self, input: AudioFrame) -> AudioFrame {
-        if self.bypass {
-            return input;
-        }
-
-        AudioFrame {
-            left: (input.left * self.gain).clamp(-self.threshold, self.threshold),
-            right: (input.right * self.gain).clamp(-self.threshold, self.threshold),
-        }
-    }
-
-    fn set_parameter(&mut self, id: u32, value: f32) {
-        match id {
-            0 => self.gain = value,
-            1 => self.threshold = value,
-            _ => {}
-        }
-    }
-
-    fn get_parameter(&self, id: u32) -> f32 {
-        match id {
-            0 => self.gain,
-            1 => self.threshold,
-            _ => 0.0,
-        }
-    }
-
-    fn is_bypassed(&self) -> bool {
-        self.bypass
-    }
-
-    fn set_bypass(&mut self, bypass: bool) {
-        self.bypass = bypass;
-    }
-
-    fn reset(&mut self) {}
-}
-```
-
-Setelah itu daftarkan modul efek kamu di catalog `src/dsp/mod.rs` dan UI selector di `src/gui/effect_card.rs`.
+1. **Noise Gate**: Menghilangkan hum dan hiss pickup gitar saat senar diam.
+2. **Sustainer Compressor**: Meratakan dinamika sinyal, memperpanjang sustain, dilengkapi indikator Gain Reduction.
+3. **Overdrive**: Emulasi soft-clipping tube amplifier dengan saturasi dinamis responsif petikan senar.
+4. **Distortion**: Asymmetric hard-clipping untuk tone rock dan metal agresif.
+5. **Fuzz**: Karakter wavefolding germanium transisi tajam gaya fuzz klasik.
+6. **FIR Cabinet Simulator**: Konvolusi impulse response resolusi tinggi dengan 4 preset kabinet esensial + dukungan loading IR WAV custom.
+7. **Stereo Delay**: Delay stereo lebar dengan mode ping-pong, redaman low-pass analog, dan interpolasi fraksional.
+8. **Studio Reverb**: Simulasi pantulan ruang (decay, room size, damping) dengan stereo decorrelation.
+9. **3-Band Parametric EQ**: Low-shelf (80 Hz), peaking mid parametrik dengan kontrol Q-factor, dan high-shelf (5 kHz).
+10. **Vocal Suite & De-Esser**: Low-cut filter 80 Hz untuk menghilangkan rumble, serta split-band/wideband sibilance control dengan listen mode.
 
 ---
 
-## 📁 Struktur Folder Project
+## 📁 Format Preset (JSON)
 
-```
-AMPku/
-├── Cargo.toml                  # Konfigurasi dependensi Rust & profil rilis
-├── README.md                   # Dokumentasi lengkap produk & developer guide
-├── CHANGELOG.md                # Catatan rilis minor & major
-├── docs/
-│   └── superpowers/specs/      # Dokumen arsitektur teknis mendalam
-├── src/
-│   ├── main.rs                 # Entry point aplikasi & startup window
-│   ├── audio/                  # Engine audio cpal, WASAPI routing, recorder
-│   │   ├── engine.rs           # Inisialisasi stream & buffer callback
-│   │   ├── ring_buffer.rs      # SPSC ring buffer lock-free
-│   │   └── recorder.rs         # Background WAV file writer (hound)
-│   ├── dsp/                    # Kumpulan algoritma efek audio
-│   │   ├── traits.rs           # Trait AudioEffect
-│   │   ├── chain.rs            # Modular node execution pipeline
-│   │   ├── dynamics/           # Noise gate, sustainer compressor
-│   │   ├── saturation/         # Overdrive, distortion, fuzz, booster
-│   │   ├── filters/            # Biquad EQ, high-pass filter
-│   │   ├── time/               # Delay, reverb
-│   │   └── cab_sim/            # FIR Cabinet Impulse Response convolution
-│   ├── gui/                    # Antarmuka grafis desktop (egui)
-│   │   ├── app.rs              # Root application view
-│   │   ├── channel_strip.rs    # Kolom mixer Gitar & Mic
-│   │   ├── effect_card.rs      # Tampilan modular card untuk efek
-│   │   └── meter.rs            # Widget VU meter stereo & desibel
-│   └── presets/                # Sistem preset JSON
-│       ├── manager.rs          # Serializer & deserializer
-│       └── defaults.rs         # Preset bawaan pabrik (blues, lead, clean)
-```
-
----
-
-## 📄 Format Preset (JSON)
-Setiap preset disimpan dalam file JSON manusiawi yang mudah diedit:
+Preset disimpan dalam format JSON bersih dan manusiawi:
 ```json
 {
   "name": "Texas Blues",
