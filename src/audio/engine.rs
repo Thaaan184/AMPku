@@ -12,8 +12,9 @@ use crate::audio::device::{
     AudioStreamConfig, DeviceError,
 };
 use crate::audio::recorder::WavRecorder;
+use crate::core::atomic_float::AtomicF32;
 use crate::core::frame::AudioFrame;
-use crate::engine::channel::ChannelStrip;
+use crate::engine::channel::{linear_to_db, ChannelStrip};
 use crate::engine::master_bus::MasterBus;
 
 /// Maximum buffer frames handled without heap allocation on the audio callback stack.
@@ -32,6 +33,167 @@ fn get_audio_host() -> cpal::Host {
     cpal::default_host()
 }
 
+/// Real-time lock-free stereo VU meters and limiter gain reduction for GUI visualization.
+///
+/// Thread-safe and non-blocking: the audio stream callbacks update these meters atomically,
+/// and the GUI thread can poll them at 60 Hz without taking mutex locks or causing priority inversion.
+#[derive(Debug)]
+pub struct EngineMeters {
+    pub guitar_peak_left: AtomicF32,
+    pub guitar_peak_right: AtomicF32,
+    pub guitar_rms_left: AtomicF32,
+    pub guitar_rms_right: AtomicF32,
+    pub mic_peak_left: AtomicF32,
+    pub mic_peak_right: AtomicF32,
+    pub mic_rms_left: AtomicF32,
+    pub mic_rms_right: AtomicF32,
+    pub master_peak_left: AtomicF32,
+    pub master_peak_right: AtomicF32,
+    pub master_rms_left: AtomicF32,
+    pub master_rms_right: AtomicF32,
+    pub master_gain_reduction: AtomicF32,
+}
+
+impl Default for EngineMeters {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl EngineMeters {
+    /// Create zeroed engine meters.
+    pub fn new() -> Self {
+        Self {
+            guitar_peak_left: AtomicF32::new(0.0),
+            guitar_peak_right: AtomicF32::new(0.0),
+            guitar_rms_left: AtomicF32::new(0.0),
+            guitar_rms_right: AtomicF32::new(0.0),
+            mic_peak_left: AtomicF32::new(0.0),
+            mic_peak_right: AtomicF32::new(0.0),
+            mic_rms_left: AtomicF32::new(0.0),
+            mic_rms_right: AtomicF32::new(0.0),
+            master_peak_left: AtomicF32::new(0.0),
+            master_peak_right: AtomicF32::new(0.0),
+            master_rms_left: AtomicF32::new(0.0),
+            master_rms_right: AtomicF32::new(0.0),
+            master_gain_reduction: AtomicF32::new(0.0),
+        }
+    }
+
+    /// Reset all meters and gain reduction registers to zero.
+    pub fn reset(&self) {
+        self.guitar_peak_left.set(0.0);
+        self.guitar_peak_right.set(0.0);
+        self.guitar_rms_left.set(0.0);
+        self.guitar_rms_right.set(0.0);
+        self.mic_peak_left.set(0.0);
+        self.mic_peak_right.set(0.0);
+        self.mic_rms_left.set(0.0);
+        self.mic_rms_right.set(0.0);
+        self.master_peak_left.set(0.0);
+        self.master_peak_right.set(0.0);
+        self.master_rms_left.set(0.0);
+        self.master_rms_right.set(0.0);
+        self.master_gain_reduction.set(0.0);
+    }
+
+    /// Guitar channel instantaneous peak levels `(left, right)` linear amplitude.
+    #[inline]
+    pub fn guitar_peak(&self) -> (f32, f32) {
+        (self.guitar_peak_left.get(), self.guitar_peak_right.get())
+    }
+
+    /// Guitar channel RMS levels `(left, right)` linear amplitude.
+    #[inline]
+    pub fn guitar_rms(&self) -> (f32, f32) {
+        (self.guitar_rms_left.get(), self.guitar_rms_right.get())
+    }
+
+    /// Mic channel instantaneous peak levels `(left, right)` linear amplitude.
+    #[inline]
+    pub fn mic_peak(&self) -> (f32, f32) {
+        (self.mic_peak_left.get(), self.mic_peak_right.get())
+    }
+
+    /// Mic channel RMS levels `(left, right)` linear amplitude.
+    #[inline]
+    pub fn mic_rms(&self) -> (f32, f32) {
+        (self.mic_rms_left.get(), self.mic_rms_right.get())
+    }
+
+    /// Master sum bus instantaneous peak levels `(left, right)` linear amplitude.
+    #[inline]
+    pub fn master_peak(&self) -> (f32, f32) {
+        (self.master_peak_left.get(), self.master_peak_right.get())
+    }
+
+    /// Master sum bus RMS levels `(left, right)` linear amplitude.
+    #[inline]
+    pub fn master_rms(&self) -> (f32, f32) {
+        (self.master_rms_left.get(), self.master_rms_right.get())
+    }
+
+    /// Current Guitar channel peak levels in dBFS `(left_db, right_db)`.
+    #[inline]
+    pub fn guitar_peak_db(&self) -> (f32, f32) {
+        (
+            linear_to_db(self.guitar_peak_left.get()),
+            linear_to_db(self.guitar_peak_right.get()),
+        )
+    }
+
+    /// Current Guitar channel RMS levels in dBFS `(left_db, right_db)`.
+    #[inline]
+    pub fn guitar_rms_db(&self) -> (f32, f32) {
+        (
+            linear_to_db(self.guitar_rms_left.get()),
+            linear_to_db(self.guitar_rms_right.get()),
+        )
+    }
+
+    /// Current Mic channel peak levels in dBFS `(left_db, right_db)`.
+    #[inline]
+    pub fn mic_peak_db(&self) -> (f32, f32) {
+        (
+            linear_to_db(self.mic_peak_left.get()),
+            linear_to_db(self.mic_peak_right.get()),
+        )
+    }
+
+    /// Current Mic channel RMS levels in dBFS `(left_db, right_db)`.
+    #[inline]
+    pub fn mic_rms_db(&self) -> (f32, f32) {
+        (
+            linear_to_db(self.mic_rms_left.get()),
+            linear_to_db(self.mic_rms_right.get()),
+        )
+    }
+
+    /// Current master output bus peak levels in dBFS `(left_db, right_db)`.
+    #[inline]
+    pub fn master_peak_db(&self) -> (f32, f32) {
+        (
+            linear_to_db(self.master_peak_left.get()),
+            linear_to_db(self.master_peak_right.get()),
+        )
+    }
+
+    /// Current master output bus RMS levels in dBFS `(left_db, right_db)`.
+    #[inline]
+    pub fn master_rms_db(&self) -> (f32, f32) {
+        (
+            linear_to_db(self.master_rms_left.get()),
+            linear_to_db(self.master_rms_right.get()),
+        )
+    }
+
+    /// Current master bus limiter gain reduction in decibels (negative or zero dBFS).
+    #[inline]
+    pub fn master_gain_reduction_db(&self) -> f32 {
+        self.master_gain_reduction.get()
+    }
+}
+
 /// Core audio engine managing duplex hardware streaming, DSP routing, and metering.
 pub struct AudioEngine {
     host: cpal::Host,
@@ -41,6 +203,7 @@ pub struct AudioEngine {
     master_bus: Arc<Mutex<MasterBus>>,
     drift_buffer: SharedClockDriftBuffer,
     recorder: Arc<Mutex<Option<Arc<Mutex<WavRecorder>>>>>,
+    meters: Arc<EngineMeters>,
     input_stream: Option<cpal::Stream>,
     output_stream: Option<cpal::Stream>,
     active_input_name: Option<String>,
@@ -72,6 +235,7 @@ impl AudioEngine {
         let master = Arc::new(Mutex::new(MasterBus::with_sample_rate(
             config.sample_rate as f32,
         )));
+        let meters = Arc::new(EngineMeters::new());
 
         Ok(Self {
             host,
@@ -81,6 +245,7 @@ impl AudioEngine {
             master_bus: master,
             drift_buffer,
             recorder: Arc::new(Mutex::new(None)),
+            meters,
             input_stream: None,
             output_stream: None,
             active_input_name: None,
@@ -182,6 +347,17 @@ impl AudioEngine {
         &self.drift_buffer
     }
 
+    /// Reference to real-time atomic meters for lock-free UI polling.
+    #[inline]
+    pub fn meters(&self) -> &Arc<EngineMeters> {
+        &self.meters
+    }
+
+    /// Reset all VU meter levels and limiter gain reduction registers.
+    pub fn reset_meters(&self) {
+        self.meters.reset();
+    }
+
     /// Attach a background WAV recorder to capture master sum bus output.
     pub fn attach_recorder(&self, recorder: Arc<Mutex<WavRecorder>>) {
         if let Ok(mut r) = self.recorder.lock() {
@@ -199,59 +375,45 @@ impl AudioEngine {
     }
 
     /// Current Guitar channel peak levels in dBFS `(left_db, right_db)`.
+    #[inline]
     pub fn guitar_peak_db(&self) -> (f32, f32) {
-        self.guitar_channel
-            .lock()
-            .map(|g| g.peak_db())
-            .unwrap_or((-120.0, -120.0))
+        self.meters.guitar_peak_db()
     }
 
     /// Current Guitar channel RMS levels in dBFS `(left_db, right_db)`.
+    #[inline]
     pub fn guitar_rms_db(&self) -> (f32, f32) {
-        self.guitar_channel
-            .lock()
-            .map(|g| g.rms_db())
-            .unwrap_or((-120.0, -120.0))
+        self.meters.guitar_rms_db()
     }
 
     /// Current Mic channel peak levels in dBFS `(left_db, right_db)`.
+    #[inline]
     pub fn mic_peak_db(&self) -> (f32, f32) {
-        self.mic_channel
-            .lock()
-            .map(|m| m.peak_db())
-            .unwrap_or((-120.0, -120.0))
+        self.meters.mic_peak_db()
     }
 
     /// Current Mic channel RMS levels in dBFS `(left_db, right_db)`.
+    #[inline]
     pub fn mic_rms_db(&self) -> (f32, f32) {
-        self.mic_channel
-            .lock()
-            .map(|m| m.rms_db())
-            .unwrap_or((-120.0, -120.0))
+        self.meters.mic_rms_db()
     }
 
     /// Current master output bus peak levels in dBFS `(left_db, right_db)`.
+    #[inline]
     pub fn master_peak_db(&self) -> (f32, f32) {
-        self.master_bus
-            .lock()
-            .map(|mb| mb.meter().peak_db())
-            .unwrap_or((-120.0, -120.0))
+        self.meters.master_peak_db()
     }
 
     /// Current master output bus RMS levels in dBFS `(left_db, right_db)`.
+    #[inline]
     pub fn master_rms_db(&self) -> (f32, f32) {
-        self.master_bus
-            .lock()
-            .map(|mb| mb.meter().rms_db())
-            .unwrap_or((-120.0, -120.0))
+        self.meters.master_rms_db()
     }
 
     /// Current master bus limiter gain reduction in decibels (negative or zero dBFS).
+    #[inline]
     pub fn master_gain_reduction_db(&self) -> f32 {
-        self.master_bus
-            .lock()
-            .map(|mb| mb.gain_reduction_db())
-            .unwrap_or(0.0)
+        self.meters.master_gain_reduction_db()
     }
 
     /// Start CPAL hardware audio streams (WASAPI Exclusive on Windows).
@@ -320,10 +482,10 @@ impl AudioEngine {
                         return;
                     }
                     let frame_count = data.len() / ch;
-                    if let Ok(mut buf) = drift_in.lock() {
+                    if let Ok(mut buf) = drift_in.try_lock() {
                         for f in 0..frame_count {
                             let left = data[f * ch];
-                            let right = if ch > 1 { data[f * ch + 1] } else { left };
+                            let right = if ch > 1 { data[f * ch + 1] } else { 0.0 };
                             buf.write(AudioFrame::new(left, right));
                         }
                     }
@@ -341,6 +503,7 @@ impl AudioEngine {
         let mic_out = self.mic_channel.clone();
         let master_out = self.master_bus.clone();
         let rec_out = self.recorder.clone();
+        let meters_out = self.meters.clone();
 
         let out_stream = output_dev
             .build_output_stream(
@@ -358,8 +521,8 @@ impl AudioEngine {
                     let mut mic_frames = [AudioFrame::ZERO; MAX_STACK_FRAMES];
                     let mut master_frames = [AudioFrame::ZERO; MAX_STACK_FRAMES];
 
-                    // 1. Pull frames from drift buffer
-                    if let Ok(mut db) = drift_out.lock() {
+                    // 1. Pull frames from drift buffer (non-blocking)
+                    if let Ok(mut db) = drift_out.try_lock() {
                         db.read(&mut in_frames[..count]);
                     }
 
@@ -369,30 +532,52 @@ impl AudioEngine {
                         mic_frames[i] = AudioFrame::from_mono(in_frames[i].right);
                     }
 
-                    // 3. Process channels with solo bus state
-                    let solo_g = guitar_out.lock().map(|g| g.is_solo()).unwrap_or(false);
-                    let solo_m = mic_out.lock().map(|m| m.is_solo()).unwrap_or(false);
-                    let solo_active = solo_g || solo_m;
+                    // 3. Process channels with solo bus state without redundant double locks
+                    let mut guitar_guard = guitar_out.try_lock().ok();
+                    let mut mic_guard = mic_out.try_lock().ok();
 
-                    if let Ok(mut g) = guitar_out.lock() {
+                    let solo_active = guitar_guard.as_ref().map(|g| g.is_solo()).unwrap_or(false)
+                        || mic_guard.as_ref().map(|m| m.is_solo()).unwrap_or(false);
+
+                    if let Some(ref mut g) = guitar_guard {
                         g.process_block_with_solo(&mut guitar_frames[..count], solo_active);
+                        meters_out.guitar_peak_left.set(g.meter().peak_left());
+                        meters_out.guitar_peak_right.set(g.meter().peak_right());
+                        meters_out.guitar_rms_left.set(g.meter().rms_left());
+                        meters_out.guitar_rms_right.set(g.meter().rms_right());
+                    } else {
+                        guitar_frames[..count].fill(AudioFrame::ZERO);
                     }
-                    if let Ok(mut m) = mic_out.lock() {
+
+                    if let Some(ref mut m) = mic_guard {
                         m.process_block_with_solo(&mut mic_frames[..count], solo_active);
+                        meters_out.mic_peak_left.set(m.meter().peak_left());
+                        meters_out.mic_peak_right.set(m.meter().peak_right());
+                        meters_out.mic_rms_left.set(m.meter().rms_left());
+                        meters_out.mic_rms_right.set(m.meter().rms_right());
+                    } else {
+                        mic_frames[..count].fill(AudioFrame::ZERO);
                     }
 
                     // 4. Sum channels into master bus
                     for i in 0..count {
                         master_frames[i] = guitar_frames[i] + mic_frames[i];
                     }
-                    if let Ok(mut mb) = master_out.lock() {
+                    if let Ok(mut mb) = master_out.try_lock() {
                         mb.process_block(&mut master_frames[..count]);
+                        meters_out.master_peak_left.set(mb.meter().peak_left());
+                        meters_out.master_peak_right.set(mb.meter().peak_right());
+                        meters_out.master_rms_left.set(mb.meter().rms_left());
+                        meters_out.master_rms_right.set(mb.meter().rms_right());
+                        meters_out.master_gain_reduction.set(mb.gain_reduction_db());
+                    } else {
+                        master_frames[..count].fill(AudioFrame::ZERO);
                     }
 
-                    // 5. Push to background recorder if recording is active
-                    if let Ok(r_guard) = rec_out.lock() {
+                    // 5. Push to background recorder if recording is active (non-blocking)
+                    if let Ok(r_guard) = rec_out.try_lock() {
                         if let Some(ref rec_arc) = *r_guard {
-                            if let Ok(mut recorder) = rec_arc.lock() {
+                            if let Ok(mut recorder) = rec_arc.try_lock() {
                                 recorder.push_block(&master_frames[..count]);
                             }
                         }
@@ -410,6 +595,11 @@ impl AudioEngine {
                                 data[f * ch + extra] = 0.0;
                             }
                         }
+                    }
+
+                    // Zero remaining hardware buffer if frame_count exceeds stack scratch limit
+                    if frame_count > MAX_STACK_FRAMES {
+                        data[count * ch..].fill(0.0);
                     }
                 },
                 move |err| {
@@ -457,7 +647,7 @@ impl AudioEngine {
         }
 
         // Write input into drift buffer
-        if let Ok(mut db) = self.drift_buffer.lock() {
+        if let Ok(mut db) = self.drift_buffer.try_lock() {
             for &f in &input[..count] {
                 db.write(f);
             }
@@ -465,7 +655,7 @@ impl AudioEngine {
 
         // Pull from drift buffer
         let mut in_frames = vec![AudioFrame::ZERO; count];
-        if let Ok(mut db) = self.drift_buffer.lock() {
+        if let Ok(mut db) = self.drift_buffer.try_lock() {
             db.read(&mut in_frames);
         }
 
@@ -479,23 +669,30 @@ impl AudioEngine {
             *f = AudioFrame::from_mono(f.right);
         }
 
-        let solo_g = self
-            .guitar_channel
-            .lock()
-            .map(|g| g.is_solo())
-            .unwrap_or(false);
-        let solo_m = self
-            .mic_channel
-            .lock()
-            .map(|m| m.is_solo())
-            .unwrap_or(false);
-        let solo_active = solo_g || solo_m;
+        let mut guitar_guard = self.guitar_channel.try_lock().ok();
+        let mut mic_guard = self.mic_channel.try_lock().ok();
 
-        if let Ok(mut g) = self.guitar_channel.lock() {
+        let solo_active = guitar_guard.as_ref().map(|g| g.is_solo()).unwrap_or(false)
+            || mic_guard.as_ref().map(|m| m.is_solo()).unwrap_or(false);
+
+        if let Some(ref mut g) = guitar_guard {
             g.process_block_with_solo(&mut guitar_frames, solo_active);
+            self.meters.guitar_peak_left.set(g.meter().peak_left());
+            self.meters.guitar_peak_right.set(g.meter().peak_right());
+            self.meters.guitar_rms_left.set(g.meter().rms_left());
+            self.meters.guitar_rms_right.set(g.meter().rms_right());
+        } else {
+            guitar_frames.fill(AudioFrame::ZERO);
         }
-        if let Ok(mut m) = self.mic_channel.lock() {
+
+        if let Some(ref mut m) = mic_guard {
             m.process_block_with_solo(&mut mic_frames, solo_active);
+            self.meters.mic_peak_left.set(m.meter().peak_left());
+            self.meters.mic_peak_right.set(m.meter().peak_right());
+            self.meters.mic_rms_left.set(m.meter().rms_left());
+            self.meters.mic_rms_right.set(m.meter().rms_right());
+        } else {
+            mic_frames.fill(AudioFrame::ZERO);
         }
 
         let mut sum_frames = vec![AudioFrame::ZERO; count];
@@ -503,13 +700,22 @@ impl AudioEngine {
             sum_frames[i] = guitar_frames[i] + mic_frames[i];
         }
 
-        if let Ok(mut mb) = self.master_bus.lock() {
+        if let Ok(mut mb) = self.master_bus.try_lock() {
             mb.process_block(&mut sum_frames);
+            self.meters.master_peak_left.set(mb.meter().peak_left());
+            self.meters.master_peak_right.set(mb.meter().peak_right());
+            self.meters.master_rms_left.set(mb.meter().rms_left());
+            self.meters.master_rms_right.set(mb.meter().rms_right());
+            self.meters
+                .master_gain_reduction
+                .set(mb.gain_reduction_db());
+        } else {
+            sum_frames.fill(AudioFrame::ZERO);
         }
 
-        if let Ok(rec_guard) = self.recorder.lock() {
+        if let Ok(rec_guard) = self.recorder.try_lock() {
             if let Some(ref rec_arc) = *rec_guard {
-                if let Ok(mut rec) = rec_arc.lock() {
+                if let Ok(mut rec) = rec_arc.try_lock() {
                     rec.push_block(&sum_frames);
                 }
             }

@@ -12,5 +12,5 @@ pub use device::{
     AudioStreamConfig, DeviceError, DEFAULT_BUFFER_SIZE, DEFAULT_SAMPLE_RATE,
     SUPPORTED_BUFFER_SIZES, SUPPORTED_SAMPLE_RATES,
 };
-pub use engine::AudioEngine;
+pub use engine::{AudioEngine, EngineMeters};
 pub use recorder::{i24_to_sample, sample_to_i24, RecorderError, WavRecorder};

@@ -315,3 +315,97 @@ fn test_audio_engine_device_queries_safe() {
     let outputs = engine.output_devices();
     println!("Found {} inputs, {} outputs", inputs.len(), outputs.len());
 }
+
+#[test]
+fn test_audio_engine_callback_lock_contention_graceful_silence() {
+    let engine = AudioEngine::new().expect("Failed to initialize AudioEngine");
+
+    // Process initial block so buffers and state are warm
+    let input = vec![AudioFrame::new(0.8, 0.4); 64];
+    let mut output = vec![AudioFrame::ZERO; 64];
+    engine.process_block(&input, &mut output);
+    assert!(output[0].left > 0.0);
+
+    // Hold lock on guitar channel (simulating GUI parameter edit)
+    let _guitar_guard = engine.guitar_channel().lock().unwrap();
+
+    // With guitar locked, process_block should gracefully fallback guitar to silence
+    // instead of blocking the real-time thread or deadlocking
+    let mut output_contended = vec![AudioFrame::ZERO; 64];
+    engine.process_block(&input, &mut output_contended);
+
+    // Mic (0.4) is still processed, but guitar is silenced
+    // Master receives only mic signal (0.4 / 2 = 0.2 approx post fader)
+    assert!(output_contended[0].left > 0.0);
+    assert!(output_contended[0].left < output[0].left);
+
+    // Drop lock
+    drop(_guitar_guard);
+
+    // After lock is released, guitar processing resumes normally
+    let mut output_recovered = vec![AudioFrame::ZERO; 64];
+    engine.process_block(&input, &mut output_recovered);
+    assert!((output_recovered[0].left - output[0].left).abs() < 1e-4);
+}
+
+#[test]
+fn test_audio_engine_lock_free_meters_concurrent_query() {
+    let engine = AudioEngine::new().expect("Failed to initialize AudioEngine");
+
+    // Feed signal to populate meters
+    let input = vec![AudioFrame::new(0.5, 0.5); 64];
+    let mut output = vec![AudioFrame::ZERO; 64];
+    engine.process_block(&input, &mut output);
+
+    // Hold all mutexes simultaneously
+    let _g = engine.guitar_channel().lock().unwrap();
+    let _m = engine.mic_channel().lock().unwrap();
+    let _mb = engine.master_bus().lock().unwrap();
+
+    // Meter queries must complete immediately without locking or blocking
+    let (g_pk_l, g_pk_r) = engine.guitar_peak_db();
+    let (g_rms_l, g_rms_r) = engine.guitar_rms_db();
+    let (m_pk_l, m_pk_r) = engine.mic_peak_db();
+    let (m_rms_l, m_rms_r) = engine.mic_rms_db();
+    let (mst_pk_l, mst_pk_r) = engine.master_peak_db();
+    let (mst_rms_l, mst_rms_r) = engine.master_rms_db();
+    let gr = engine.master_gain_reduction_db();
+
+    assert!(g_pk_l > -60.0);
+    assert!(g_pk_r > -60.0);
+    assert!(g_rms_l > -60.0);
+    assert!(g_rms_r > -60.0);
+    assert!(m_pk_l > -60.0);
+    assert!(m_pk_r > -60.0);
+    assert!(m_rms_l > -60.0);
+    assert!(m_rms_r > -60.0);
+    assert!(mst_pk_l > -60.0);
+    assert!(mst_pk_r > -60.0);
+    assert!(mst_rms_l > -60.0);
+    assert!(mst_rms_r > -60.0);
+    assert_eq!(gr, 0.0);
+
+    // Access via EngineMeters struct directly
+    let meters = engine.meters();
+    let (pk_l, pk_r) = meters.guitar_peak();
+    assert!(pk_l > 0.0 && pk_r > 0.0);
+}
+
+#[test]
+fn test_audio_engine_mono_input_no_bleed() {
+    let engine = AudioEngine::new().expect("Failed to initialize AudioEngine");
+
+    // Mono input: Left has guitar signal (0.7), Right has silence (0.0)
+    let input = vec![AudioFrame::new(0.7, 0.0); 64];
+    let mut output = vec![AudioFrame::ZERO; 64];
+    engine.process_block(&input, &mut output);
+
+    // Guitar should be active
+    let (g_pk_l, _) = engine.guitar_peak_db();
+    assert!(g_pk_l > -60.0);
+
+    // Mic must be completely silent (no bleed from guitar)
+    let (m_pk_l, m_pk_r) = engine.mic_peak_db();
+    assert!(m_pk_l <= -100.0);
+    assert!(m_pk_r <= -100.0);
+}
