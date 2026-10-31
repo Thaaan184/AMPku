@@ -1,4 +1,4 @@
 pub mod audio;
-pub mod core;
-pub mod dsp;
-pub mod ui;
+pub mod devices;
+pub mod effects;
+pub mod terminal;

@@ -1,38 +1,36 @@
 @echo off
 setlocal
-title GuitarFX - Lightweight Terminal Guitar Effects Engine
+title GuitarFX Rust - Terminal Guitar Effects Engine
 
-:: If guitarfx.exe already exists, launch immediately
+:: 1. If guitarfx.exe already exists, launch directly
 if exist "guitarfx.exe" (
-    echo [*] Launching GuitarFX...
+    echo [*] Starting GuitarFX...
     guitarfx.exe
     goto :END
 )
 
-:: If build directory has it
-if exist "build\guitarfx.exe" (
-    echo [*] Launching GuitarFX from build...
-    build\guitarfx.exe
+:: 2. If cargo target directory has it
+if exist "target\release\guitarfx.exe" (
+    echo [*] Starting GuitarFX from target\release...
+    target\release\guitarfx.exe
     goto :END
 )
 
-if exist "build\Release\guitarfx.exe" (
-    echo [*] Launching GuitarFX from build\Release...
-    build\Release\guitarfx.exe
+:: 3. Otherwise compile and run via Cargo
+where cargo >nul 2>&1
+if %ERRORLEVEL% EQU 0 (
+    echo [*] Building and running GuitarFX via Cargo...
+    cargo run --release
     goto :END
 )
 
-echo [!] guitarfx.exe not found. Running build.bat...
-call build.bat
-if exist "build\Release\guitarfx.exe" (
-    build\Release\guitarfx.exe
-) else if exist "build\guitarfx.exe" (
-    build\guitarfx.exe
-)
+echo [!] Error: guitarfx.exe not found and Cargo is not installed.
+echo [*] Download the pre-built guitarfx.exe or install Rust from https://rustup.rs
+pause
 
 :END
 if %ERRORLEVEL% NEQ 0 (
     echo.
-    echo [-] GuitarFX exited with error code %ERRORLEVEL%.
+    echo [-] GuitarFX exited with code %ERRORLEVEL%.
     pause
 )

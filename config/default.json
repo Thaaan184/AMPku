@@ -1,8 +1,0 @@
-{
-  "audio": {
-    "buffer_size": 256,
-    "capture_device": "",
-    "playback_device": "",
-    "sample_rate": 48000
-  }
-}
